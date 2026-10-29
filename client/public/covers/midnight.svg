@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 800" role="img" aria-label="midnight">
+  <rect width="1200" height="800" fill="#0c0d0a"/>
+    <rect x="180" width="36" height="800" fill="#d7f25a"/>
+    <rect x="360" y="180" width="680" height="440" fill="none" stroke="#f4f1ea" stroke-width="12"/>
+</svg>

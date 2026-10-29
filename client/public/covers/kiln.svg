@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 800" role="img" aria-label="kiln">
+  <rect width="1200" height="800" fill="#14160f"/>
+    <g fill="none" stroke="#f4f1ea" stroke-width="12">
+      <rect x="140" y="140" width="180" height="180"/>
+      <rect x="360" y="140" width="180" height="180"/>
+      <rect x="580" y="140" width="180" height="180"/>
+      <rect x="140" y="360" width="180" height="180"/>
+      <rect x="580" y="360" width="180" height="180"/>
+      <rect x="140" y="580" width="180" height="80"/>
+    </g>
+    <rect x="360" y="360" width="180" height="180" fill="#d7f25a"/>
+</svg>

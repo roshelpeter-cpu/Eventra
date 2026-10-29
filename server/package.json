@@ -1,0 +1,19 @@
+{
+  "name": "eventra-server",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "node --watch src/index.js",
+    "start": "node src/index.js",
+    "test": "node --test --test-concurrency=1",
+    "db:init": "node src/cli.js init",
+    "db:seed": "node src/cli.js seed",
+    "db:reset": "node src/cli.js reset"
+  },
+  "dependencies": {
+    "bcryptjs": "^2.4.3",
+    "express": "^4.21.2",
+    "qrcode": "^1.5.4"
+  }
+}

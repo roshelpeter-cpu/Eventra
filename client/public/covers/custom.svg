@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 800" role="img" aria-label="custom">
+  <rect width="1200" height="800" fill="#f4f1ea"/>
+    <circle cx="430" cy="400" r="180" fill="#14160f"/>
+    <rect x="690" y="250" width="180" height="180" fill="#d7f25a"/>
+    <text x="392" y="430" fill="#f4f1ea" font-family="Georgia, serif" font-size="140">E</text>
+</svg>

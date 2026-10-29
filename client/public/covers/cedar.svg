@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 800" role="img" aria-label="cedar">
+  <rect width="1200" height="800" fill="#3c4034"/>
+    <polygon points="0,800 520,0 700,0 180,800" fill="#d9d3c4"/>
+    <rect x="760" y="160" width="280" height="18" fill="#d7f25a"/>
+</svg>

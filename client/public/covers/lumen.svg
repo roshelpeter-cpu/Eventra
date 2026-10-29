@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 800" role="img" aria-label="lumen">
+  <rect width="1200" height="800" fill="#1c140f"/>
+    <circle cx="820" cy="390" r="260" fill="#e6a15c"/>
+    <circle cx="250" cy="180" r="28" fill="#d7f25a"/>
+    <rect x="90" y="620" width="420" height="16" fill="#f4f1ea"/>
+</svg>

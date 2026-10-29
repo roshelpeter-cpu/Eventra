@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 800" role="img" aria-label="harbor">
+  <rect width="1200" height="800" fill="#102028"/>
+    <rect y="360" width="1200" height="18" fill="#d7f25a"/>
+    <circle cx="240" cy="250" r="150" fill="none" stroke="#f4f1ea" stroke-width="18"/>
+    <circle cx="860" cy="560" r="210" fill="#1d4a57"/>
+</svg>

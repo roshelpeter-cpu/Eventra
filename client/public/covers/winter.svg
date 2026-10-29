@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 800" role="img" aria-label="winter">
+  <rect width="1200" height="800" fill="#d9d3c7"/>
+    <rect x="160" y="120" width="520" height="560" fill="#14160f"/>
+    <rect x="760" y="120" width="160" height="160" fill="#d7f25a"/>
+</svg>
