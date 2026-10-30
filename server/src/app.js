@@ -23,6 +23,7 @@ import {
   getMetrics,
   getPublicEvent,
   getTicket,
+  getTicketStatus,
   listEvents,
   listRegistrations,
   registerForEvent,
@@ -32,6 +33,15 @@ import {
   updateRegistrationStatus,
   withQr,
 } from './services.js';
+import { requestTicketCode, subscribeEmail, verifyTicketCode } from './access.js';
+import {
+  cancelPayment,
+  getPayment,
+  handleRazorpayWebhook,
+  simulatePayment,
+  startCheckout,
+  verifyRazorpayPayment,
+} from './payments.js';
 import { parsePositiveInt } from './validate.js';
 
 const buckets = new Map();
@@ -60,7 +70,12 @@ function clientIp(req) {
 export function createApp(db, { clientDist } = {}) {
   const app = express();
   app.disable('x-powered-by');
-  app.use(express.json({ limit: '200kb' }));
+  app.use((req, res, next) => {
+    if (req.path === '/api/webhooks/razorpay') {
+      return express.raw({ type: '*/*', limit: '200kb' })(req, res, next);
+    }
+    return express.json({ limit: '200kb' })(req, res, next);
+  });
   app.use((req, res, next) => {
     res.setHeader('X-Content-Type-Options', 'nosniff');
     res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
@@ -78,7 +93,7 @@ export function createApp(db, { clientDist } = {}) {
       res.setHeader('Access-Control-Allow-Methods', 'GET,POST,PATCH,OPTIONS');
       return res.sendStatus(204);
     }
-    if (req.method !== 'GET' && req.method !== 'HEAD') {
+    if (req.method !== 'GET' && req.method !== 'HEAD' && req.path !== '/api/webhooks/razorpay') {
       try {
         assertOrigin(req);
       } catch (error) {
@@ -122,6 +137,22 @@ export function createApp(db, { clientDist } = {}) {
     res.status(201).json({ registration });
   }));
 
+  app.post('/api/events/:id/checkout', asyncRoute(async (req, res) => {
+    rateLimit(`checkout:${clientIp(req)}`, 30, 15 * 60 * 1000);
+    const result = await startCheckout(db, req.params.id, req.body);
+    if (result.registration) result.registration = await withQr(result.registration);
+    res.status(result.registration ? 201 : 200).json(result);
+  }));
+
+  app.post('/api/subscribe', (req, res, next) => {
+    try {
+      rateLimit(`subscribe:${clientIp(req)}`, 10, 15 * 60 * 1000);
+      res.status(201).json(subscribeEmail(db, req.body?.email));
+    } catch (error) {
+      next(error);
+    }
+  });
+
   app.post('/api/contact', (req, res, next) => {
     try {
       rateLimit(`contact:${clientIp(req)}`, 8, 15 * 60 * 1000);
@@ -146,6 +177,14 @@ export function createApp(db, { clientDist } = {}) {
     }
   });
 
+  app.get('/api/tickets/:code/status', (req, res, next) => {
+    try {
+      res.json({ ticket: getTicketStatus(db, req.params.code) });
+    } catch (error) {
+      next(error);
+    }
+  });
+
   app.get('/api/tickets/:code', asyncRoute(async (req, res) => {
     const ticket = await withQr(getTicket(db, req.params.code, { mask: true }));
     res.json({ ticket });
@@ -157,6 +196,56 @@ export function createApp(db, { clientDist } = {}) {
     res.setHeader('Content-Type', 'image/svg+xml; charset=utf-8');
     res.setHeader('Content-Disposition', `attachment; filename="eventra-${ticket.ticketCode}.svg"`);
     res.send(svg);
+  }));
+
+  app.post('/api/tickets/access', (req, res, next) => {
+    try {
+      rateLimit(`ticket-code:${clientIp(req)}`, 12, 15 * 60 * 1000);
+      res.json(requestTicketCode(db, req.body?.email));
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.post('/api/tickets/access/verify', (req, res, next) => {
+    try {
+      rateLimit(`ticket-verify:${clientIp(req)}`, 20, 15 * 60 * 1000);
+      res.json(verifyTicketCode(db, req.body?.email, req.body?.code));
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.get('/api/payments/:publicId', (req, res, next) => {
+    try {
+      res.json({ payment: getPayment(db, req.params.publicId) });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.post('/api/payments/:publicId/simulate', asyncRoute(async (req, res) => {
+    const result = simulatePayment(db, req.params.publicId, req.body?.outcome);
+    if (result.registration) result.registration = await withQr(result.registration);
+    res.json(result);
+  }));
+
+  app.post('/api/payments/:publicId/cancel', (req, res, next) => {
+    try {
+      res.json({ payment: cancelPayment(db, req.params.publicId) });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.post('/api/payments/razorpay/verify', asyncRoute(async (req, res) => {
+    const registration = await withQr(await verifyRazorpayPayment(db, req.body));
+    res.json({ registration });
+  }));
+
+  app.post('/api/webhooks/razorpay', asyncRoute(async (req, res) => {
+    const result = await handleRazorpayWebhook(db, req.body, req.get('x-razorpay-signature'));
+    res.json(result);
   }));
 
   app.post('/api/admin/login', (req, res, next) => {

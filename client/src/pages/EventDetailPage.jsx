@@ -1,9 +1,11 @@
 import { useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { api } from '../api.js';
-import { DateBadge, EventCard, Photo } from '../components/EventCard.jsx';
+import { DateBadge, EventCard, Photo, SaveButton } from '../components/EventCard.jsx';
+import { ShareBar } from '../components/ShareBar.jsx';
+import { VenueMap } from '../components/VenueMap.jsx';
 import { ErrorBlock, Meter, PageTitle } from '../components/ui.jsx';
-import { eventFormat, formatRange, formatTimeRange, paragraphs, placeLine } from '../format.js';
+import { eventFormat, formatMoney, formatRange, formatTimeRange, paragraphs, placeLine, priceLabel } from '../format.js';
 
 const TABS = ['Overview', 'Schedule', 'Speakers', 'Venue', 'FAQs'];
 
@@ -66,10 +68,14 @@ export function EventDetailPage() {
               <DateBadge iso={event.startsAt} />
             </div>
             <div className="detail-copy">
-              <div className="chips">
-                <span className="badge">{event.category}</span>
-                <span className="badge">{kind}</span>
-                <span className="badge">{event.confirmedCount} / {event.capacity} registered</span>
+              <div className="detail-tools">
+                <div className="chips">
+                  <span className="badge">{event.category}</span>
+                  <span className="badge">{kind}</span>
+                  <span className="badge">{priceLabel(event)}</span>
+                  <span className="badge">{event.confirmedCount} / {event.capacity} seats</span>
+                </div>
+                <SaveButton slug={event.slug} title={event.title} />
               </div>
               <h1>{event.title}</h1>
               <div className="fact-row">
@@ -109,12 +115,7 @@ export function EventDetailPage() {
                 </div>
               ) : null}
               {tab === 'Venue' ? (
-                <div className="stack">
-                  <h2>{kind === 'Online' ? 'Joining information' : 'Venue'}</h2>
-                  <p>{event.venue}</p>
-                  {kind !== 'Online' ? <p className="muted">{event.city}</p> : null}
-                  <p className="lede">{event.summary}</p>
-                </div>
+                <VenueMap event={event} />
               ) : null}
               {tab === 'FAQs' ? (
                 <div className="faq">
@@ -127,17 +128,32 @@ export function EventDetailPage() {
           </div>
           <aside className="panel side-card">
             <p className="kicker">Register</p>
-            <h2>Register for this event</h2>
+            <h2>{event.startingPriceCents > 0 ? priceLabel(event) : 'Free entry'}</h2>
             <p className="meta">{formatRange(event.startsAt, event.endsAt)}</p>
             <p className="meta">{placeLine(event)} · {kind}</p>
+            {event.ticketTypes?.length ? (
+              <ul className="perk-list">
+                {event.ticketTypes.map((type) => (
+                  <li key={type.id}>
+                    <strong>{type.name}</strong>
+                    <span>{type.priceCents + type.feeCents === 0 ? 'Free' : formatMoney(type.priceCents + type.feeCents, type.currency)}</span>
+                  </li>
+                ))}
+              </ul>
+            ) : null}
             <Meter value={event.capacity ? (event.confirmedCount / event.capacity) * 100 : 0} />
             <p>{event.seatsRemaining} of {event.capacity} seats remaining.</p>
             {event.waitlistCount ? <p className="meta">{event.waitlistCount} on the waitlist. Waitlisted guests are not confirmed attendees.</p> : null}
-            <p className="price-note">No payment is collected. A confirmed registration is stored only after the server accepts it.</p>
+            <p className="price-note">{event.startingPriceCents > 0 ? 'A paid seat is confirmed only after the server verifies payment.' : 'No payment is collected. A confirmed registration is stored only after the server accepts it.'}</p>
             <p className="meta">Published by the Eventra administrator.</p>
             {closed ? <p>Registration is closed for this event.</p> : (
               <Link className="btn btn-primary" to={`/events/${event.slug}/register`}>{action}</Link>
             )}
+            <ShareBar
+              url={window.location.href}
+              title={event.title}
+              note="This shares the public event page."
+            />
           </aside>
         </div>
         {related.length ? (

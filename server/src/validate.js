@@ -78,6 +78,21 @@ export function validateRegistrationInput(body) {
     interests = unique;
   }
 
+  let quantity = 1;
+  if (source.quantity !== undefined && source.quantity !== null && source.quantity !== '') {
+    const parsed = Number(source.quantity);
+    if (!Number.isInteger(parsed) || parsed < 1 || parsed > 10) {
+      fields.quantity = 'Choose between 1 and 10 tickets.';
+    } else quantity = parsed;
+  }
+
+  let ticketTypeId = null;
+  if (source.ticketTypeId !== undefined && source.ticketTypeId !== null && source.ticketTypeId !== '') {
+    const parsed = Number(source.ticketTypeId);
+    if (!Number.isInteger(parsed) || parsed < 1) fields.ticketTypeId = 'Choose a ticket type.';
+    else ticketTypeId = parsed;
+  }
+
   if (Object.keys(fields).length) fail(fields);
   return {
     fullName,
@@ -85,6 +100,8 @@ export function validateRegistrationInput(body) {
     organization,
     interests,
     waitlist: Boolean(source.waitlist),
+    quantity,
+    ticketTypeId,
   };
 }
 
@@ -194,6 +211,68 @@ export function validateEventWrite(body, { partial = false } = {}) {
     const format = cleanText(source.format);
     if (!['in-person', 'online', 'hybrid'].includes(format)) fields.format = 'Choose in person, online, or hybrid.';
     else out.format = format;
+  }
+
+  if (source.address !== undefined || !partial) {
+    const address = cleanText(source.address || '').replace(/\s+/g, ' ');
+    if (address.length > 240) fields.address = 'Address must be 240 characters or fewer.';
+    else out.address = address;
+  }
+
+  function coordinate(key, min, max, message) {
+    if (source[key] === undefined && partial) return;
+    const raw = source[key];
+    if (raw === undefined || raw === null || raw === '') {
+      out[key] = null;
+      return;
+    }
+    const number = Number(raw);
+    if (!Number.isFinite(number) || number < min || number > max) fields[key] = message;
+    else out[key] = Math.round(number * 1e6) / 1e6;
+  }
+  coordinate('latitude', -90, 90, 'Latitude must be between -90 and 90.');
+  coordinate('longitude', -180, 180, 'Longitude must be between -180 and 180.');
+  if (!partial && (out.latitude == null) !== (out.longitude == null)) {
+    fields.latitude = 'Enter both latitude and longitude, or leave both empty.';
+  }
+
+  if (source.priceRupees !== undefined || source.priceCents !== undefined) {
+    const cents = source.priceCents !== undefined
+      ? Number(source.priceCents)
+      : Math.round(Number(source.priceRupees) * 100);
+    if (!Number.isInteger(cents) || cents < 0 || cents > 100000000) {
+      fields.priceRupees = 'Enter a price of zero or more.';
+    } else out.priceCents = cents;
+  } else if (!partial) {
+    out.priceCents = 0;
+  }
+
+  if (source.ticketTypes !== undefined) {
+    if (!Array.isArray(source.ticketTypes) || source.ticketTypes.length > 6) {
+      fields.ticketTypes = 'Add up to six ticket types.';
+    } else {
+      const names = new Set();
+      const ticketTypes = [];
+      for (const item of source.ticketTypes) {
+        const name = cleanText(item?.name || '').replace(/\s+/g, ' ');
+        if (!name) continue;
+        const price = item?.priceCents !== undefined
+          ? Number(item.priceCents)
+          : Math.round(Number(item?.priceRupees) * 100);
+        const fee = item?.feeCents !== undefined
+          ? Number(item.feeCents)
+          : Math.round(Number(item?.feeRupees || 0) * 100);
+        if (name.length < 2 || name.length > 40) fields.ticketTypes = 'Each ticket name must be 2–40 characters.';
+        else if (names.has(name.toLowerCase())) fields.ticketTypes = 'Ticket names must be unique.';
+        else if (!Number.isInteger(price) || price < 0 || price > 100000000) fields.ticketTypes = 'Enter a valid ticket price.';
+        else if (!Number.isInteger(fee) || fee < 0 || fee > 100000000) fields.ticketTypes = 'Enter a valid fee.';
+        else {
+          names.add(name.toLowerCase());
+          ticketTypes.push({ name, priceCents: price, feeCents: fee, currency: 'INR' });
+        }
+      }
+      if (!fields.ticketTypes) out.ticketTypes = ticketTypes;
+    }
   }
 
   if (!partial && Object.keys(out).length === 0) {

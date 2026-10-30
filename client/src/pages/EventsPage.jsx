@@ -10,6 +10,8 @@ const SORTS = [
   ['latest', 'Latest date'],
   ['title', 'Title'],
   ['popular', 'Most registered'],
+  ['price', 'Price: low to high'],
+  ['price_desc', 'Price: high to low'],
 ];
 
 function localISO(date) {
@@ -41,6 +43,8 @@ export function EventsPage() {
   const [params, setParams] = useSearchParams();
   const [query, setQuery] = useState(() => params.get('q') || '');
   const [events, setEvents] = useState([]);
+  const [total, setTotal] = useState(0);
+  const [page, setPage] = useState(0);
   const [cities, setCities] = useState([]);
   const [counts, setCounts] = useState({});
   const [error, setError] = useState('');
@@ -54,6 +58,7 @@ export function EventsPage() {
     setSeenKey(loadKey);
     setLoading(true);
     setError('');
+    setPage(0);
   }
 
   useEffect(() => {
@@ -71,6 +76,17 @@ export function EventsPage() {
   }, [query, params, setParams]);
 
   useEffect(() => {
+    if (params.get('focus') !== 'search') return undefined;
+    document.getElementById('event-search')?.focus();
+    setParams((prev) => {
+      const next = new URLSearchParams(prev);
+      next.delete('focus');
+      return next;
+    }, { replace: true });
+    return undefined;
+  }, [params, setParams]);
+
+  useEffect(() => {
     const controller = new AbortController();
     api('/api/events?sort=soonest', { signal: controller.signal })
       .then((data) => {
@@ -86,10 +102,13 @@ export function EventsPage() {
 
   useEffect(() => {
     const controller = new AbortController();
-    const queryString = search ? `?${search}` : '';
-    api(`/api/events${queryString}`, { signal: controller.signal })
+    const next = new URLSearchParams(search);
+    next.set('limit', '9');
+    next.set('offset', String(page * 9));
+    api(`/api/events?${next.toString()}`, { signal: controller.signal })
       .then((data) => {
-        setEvents(data.events);
+        setEvents((current) => (page === 0 ? data.events : [...current, ...data.events.filter((event) => !current.some((item) => item.id === event.id))]));
+        setTotal(data.total);
         setCities(data.cities || []);
         setLoading(false);
       })
@@ -99,7 +118,7 @@ export function EventsPage() {
         setLoading(false);
       });
     return () => controller.abort();
-  }, [search, attempt]);
+  }, [search, attempt, page]);
 
   function setFilter(key, value) {
     setParams((prev) => {
@@ -123,6 +142,7 @@ export function EventsPage() {
   }
 
   const category = params.get('category') || '';
+  const price = params.get('price') || '';
   const from = params.get('from') || '';
   const to = params.get('to') || '';
   const activePreset = useMemo(() => {
@@ -132,7 +152,7 @@ export function EventsPage() {
       return start === from && end === to;
     }) || (!from && !to ? 'any' : '');
   }, [from, to]);
-  const filtersActive = Boolean(query || category || params.get('city') || from || to || params.get('sort'));
+  const filtersActive = Boolean(query || category || price || params.get('city') || from || to || params.get('sort'));
 
   return (
     <div className="page">
@@ -195,6 +215,18 @@ export function EventsPage() {
               </div>
             </div>
             <div className="field">
+              <span id="price-label">Price</span>
+              <div className="chip-row" role="group" aria-labelledby="price-label">
+                {[
+                  ['', 'Any'],
+                  ['free', 'Free'],
+                  ['paid', 'Paid'],
+                ].map(([value, label]) => (
+                  <button key={label} type="button" className="chip" aria-pressed={price === value} onClick={() => setFilter('price', value)}>{label}</button>
+                ))}
+              </div>
+            </div>
+            <div className="field">
               <label htmlFor="sort">Sort by</label>
               <select id="sort" value={params.get('sort') || 'soonest'} onChange={(event) => setFilter('sort', event.target.value === 'soonest' ? '' : event.target.value)}>
                 {SORTS.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
@@ -213,11 +245,24 @@ export function EventsPage() {
             {!loading && !error && events.length > 0 ? (
               <>
                 <div className="result-row">
-                  <p className="meta">{events.length} event{events.length === 1 ? '' : 's'}</p>
+                  <p className="meta">{total} event{total === 1 ? '' : 's'}</p>
+                </div>
+                <div className="chip-row filter-chips">
+                  <button type="button" className="chip" aria-pressed={!category} onClick={() => setFilter('category', '')}>All</button>
+                  {CATEGORIES.map((item) => (
+                    <button key={item} type="button" className="chip" aria-pressed={category === item} onClick={() => setFilter('category', category === item ? '' : item)}>{item}</button>
+                  ))}
+                  <button type="button" className="chip" aria-pressed={price === 'free'} onClick={() => setFilter('price', price === 'free' ? '' : 'free')}>Free</button>
+                  <button type="button" className="chip" aria-pressed={price === 'paid'} onClick={() => setFilter('price', price === 'paid' ? '' : 'paid')}>Paid</button>
                 </div>
                 <div className="event-grid">
                   {events.map((event) => <EventCard key={event.id} event={event} />)}
                 </div>
+                {events.length < total ? (
+                  <div className="actions">
+                    <button type="button" className="btn btn-ghost" onClick={() => setPage((value) => value + 1)}>Load more</button>
+                  </div>
+                ) : null}
               </>
             ) : null}
           </div>

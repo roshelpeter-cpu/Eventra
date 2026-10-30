@@ -350,6 +350,174 @@ describe('Eventra API', { concurrency: 1 }, () => {
     assert.equal(again.json.registration.status, 'checked_in');
   });
 
+  test('counts ticket quantity toward capacity', async () => {
+    const id = insertEvent({ capacity: 4 });
+    const res = await api(`/api/events/${id}/registrations`, {
+      method: 'POST',
+      body: guest(91, { quantity: 3 }),
+    });
+    assert.equal(res.status, 201);
+    const event = await api(`/api/events/${id}`);
+    assert.equal(event.json.event.confirmedCount, 3);
+    assert.equal(event.json.event.seatsRemaining, 1);
+    assert.equal(event.json.event.latitude, null);
+    const tooMany = await api(`/api/events/${id}/registrations`, {
+      method: 'POST',
+      body: guest(92, { quantity: 2 }),
+    });
+    assert.equal(tooMany.status, 409);
+    assert.equal(tooMany.json.error.code, 'CAPACITY_REACHED');
+  });
+
+  test('confirms a paid seat only after a verified development payment', async () => {
+    const id = insertEvent({ title: 'Paid Gathering', capacity: 2 });
+    db.prepare(
+      `INSERT INTO ticket_types (event_id, name, price_cents, fee_cents, currency, sort_order)
+       VALUES (?, 'Regular', 50000, 2000, 'INR', 0)`,
+    ).run(id);
+    const blocked = await api(`/api/events/${id}/registrations`, { method: 'POST', body: guest(90) });
+    assert.equal(blocked.status, 402);
+    assert.equal(blocked.json.error.code, 'PAYMENT_REQUIRED');
+
+    const abandoned = await api(`/api/events/${id}/checkout`, {
+      method: 'POST',
+      body: guest(90, { quantity: 2 }),
+    });
+    assert.equal(abandoned.status, 200);
+    assert.equal(abandoned.json.checkout.simulation, true);
+    assert.equal(abandoned.json.payment.amountCents, 104000);
+    const failed = await api(`/api/payments/${abandoned.json.payment.publicId}/simulate`, {
+      method: 'POST',
+      body: { outcome: 'failed' },
+    });
+    assert.equal(failed.json.payment.status, 'failed');
+    assert.equal(db.prepare(`SELECT COUNT(*) AS n FROM registrations WHERE event_id = ?`).get(id).n, 0);
+
+    const checkout = await api(`/api/events/${id}/checkout`, {
+      method: 'POST',
+      body: guest(90, { quantity: 2 }),
+    });
+    const paid = await api(`/api/payments/${checkout.json.payment.publicId}/simulate`, {
+      method: 'POST',
+      body: { outcome: 'paid' },
+    });
+    assert.equal(paid.status, 200);
+    assert.equal(paid.json.registration.status, 'confirmed');
+    const repeat = await api(`/api/payments/${checkout.json.payment.publicId}/simulate`, {
+      method: 'POST',
+      body: { outcome: 'paid' },
+    });
+    assert.equal(repeat.json.registration.ticketCode, paid.json.registration.ticketCode);
+    assert.equal(db.prepare(`SELECT COUNT(*) AS n FROM registrations WHERE event_id = ?`).get(id).n, 1);
+
+    const duplicate = await api(`/api/events/${id}/checkout`, {
+      method: 'POST',
+      body: guest(90),
+    });
+    assert.equal(duplicate.status, 409);
+    assert.equal(duplicate.json.error.code, 'DUPLICATE_REGISTRATION');
+
+    const status = await api(`/api/tickets/${paid.json.registration.ticketCode}/status`);
+    assert.equal(status.json.ticket.valid, true);
+    assert.equal(status.json.ticket.email, undefined);
+    assert.equal(status.json.ticket.fullName, undefined);
+  });
+
+  test('limits ticket lookup codes and does not expose them in production', async () => {
+    const id = insertEvent();
+    const email = 'otp.guest@campus.example';
+    const created = await api(`/api/events/${id}/registrations`, {
+      method: 'POST',
+      body: guest(93, { email, fullName: 'Otp Guest' }),
+    });
+    const requested = await api('/api/tickets/access', { method: 'POST', body: { email } });
+    assert.equal(requested.json.delivery, 'development');
+    assert.match(requested.json.message, /not emailed/i);
+    const tooSoon = await api('/api/tickets/access', { method: 'POST', body: { email } });
+    assert.equal(tooSoon.status, 429);
+
+    const badCode = requested.json.code === '111111' ? '222222' : '111111';
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      const wrong = await api('/api/tickets/access/verify', {
+        method: 'POST',
+        body: { email, code: badCode },
+      });
+      assert.equal(wrong.status, 400);
+    }
+    const locked = await api('/api/tickets/access/verify', {
+      method: 'POST',
+      body: { email, code: requested.json.code },
+    });
+    assert.equal(locked.status, 400);
+
+    db.prepare(`UPDATE verification_codes SET created_at = ? WHERE subject = ?`).run(
+      new Date(Date.now() - 2 * 60 * 1000).toISOString(),
+      email,
+    );
+    const renewed = await api('/api/tickets/access', { method: 'POST', body: { email } });
+    assert.equal(renewed.status, 200);
+    db.prepare(
+      `UPDATE verification_codes SET expires_at = ? WHERE id = (SELECT MAX(id) FROM verification_codes WHERE subject = ?)`,
+    ).run(new Date(Date.now() - 1000).toISOString(), email);
+    const expired = await api('/api/tickets/access/verify', {
+      method: 'POST',
+      body: { email, code: renewed.json.code },
+    });
+    assert.equal(expired.status, 400);
+
+    db.prepare(`UPDATE verification_codes SET created_at = ? WHERE subject = ?`).run(
+      new Date(Date.now() - 2 * 60 * 1000).toISOString(),
+      email,
+    );
+    const fresh = await api('/api/tickets/access', { method: 'POST', body: { email } });
+    const opened = await api('/api/tickets/access/verify', {
+      method: 'POST',
+      body: { email, code: fresh.json.code },
+    });
+    assert.equal(opened.status, 200);
+    assert.equal(opened.json.tickets[0].ticketCode, created.json.registration.ticketCode);
+    const reused = await api('/api/tickets/access/verify', {
+      method: 'POST',
+      body: { email, code: fresh.json.code },
+    });
+    assert.equal(reused.status, 400);
+
+    process.env.NODE_ENV = 'production';
+    try {
+      const hidden = await api('/api/tickets/access', { method: 'POST', body: { email: 'other.guest@campus.example' } });
+      assert.equal(hidden.status, 503);
+      assert.equal(hidden.json.code, undefined);
+      assert.equal(hidden.json.error.code, 'DELIVERY_UNAVAILABLE');
+    } finally {
+      process.env.NODE_ENV = 'test';
+    }
+  });
+
+  test('rejects an unsigned payment webhook and saves a newsletter address once', async () => {
+    process.env.RAZORPAY_WEBHOOK_SECRET = 'test-webhook-secret';
+    try {
+      const webhook = await api('/api/webhooks/razorpay', {
+        method: 'POST',
+        body: { event: 'payment.captured' },
+      });
+      assert.equal(webhook.status, 400);
+      assert.equal(webhook.json.error.code, 'PAYMENT_INVALID');
+    } finally {
+      delete process.env.RAZORPAY_WEBHOOK_SECRET;
+    }
+    const subscribed = await api('/api/subscribe', {
+      method: 'POST',
+      body: { email: 'News@Campus.example' },
+    });
+    assert.equal(subscribed.status, 201);
+    const repeat = await api('/api/subscribe', {
+      method: 'POST',
+      body: { email: 'news@campus.example' },
+    });
+    assert.equal(repeat.status, 201);
+    assert.equal(db.prepare(`SELECT COUNT(*) AS n FROM subscribers WHERE email = ?`).get('news@campus.example').n, 1);
+  });
+
   test('promotes the oldest waitlisted guest when a confirmed seat is cancelled', async () => {
     const id = insertEvent({ capacity: 1, title: 'Promotion Desk' });
     const confirmed = await api(`/api/events/${id}/registrations`, { method: 'POST', body: guest(70) });

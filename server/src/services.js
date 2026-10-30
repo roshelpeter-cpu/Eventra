@@ -2,6 +2,7 @@ import crypto from 'node:crypto';
 import QRCode from 'qrcode';
 import { withTransaction } from './db.js';
 import { HttpError, isCapacityConstraint, isUniqueConstraint } from './errors.js';
+import { heldSeats, listTicketTypes, quoteForEvent, replaceTicketTypes, startingPriceCents } from './pricing.js';
 import {
   escapeLike,
   parseQueryDate,
@@ -16,9 +17,11 @@ const ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 const EVENT_COLUMNS = `
   e.id, e.slug, e.title, e.summary, e.description, e.category, e.venue, e.city,
   e.image_url, e.starts_at, e.ends_at, e.capacity, e.status, e.created_at, e.updated_at, e.details,
-  COALESCE(SUM(CASE WHEN r.status IN ('confirmed', 'checked_in') THEN 1 ELSE 0 END), 0) AS confirmed_count,
+  e.address, e.latitude, e.longitude, e.price_cents, e.currency,
+  COALESCE((SELECT MIN(tt.price_cents) FROM ticket_types tt WHERE tt.event_id = e.id), e.price_cents) AS starting_price_cents,
+  COALESCE(SUM(CASE WHEN r.status IN ('confirmed', 'checked_in') THEN COALESCE(r.quantity, 1) ELSE 0 END), 0) AS confirmed_count,
   COALESCE(SUM(CASE WHEN r.status = 'waitlisted' THEN 1 ELSE 0 END), 0) AS waitlist_count,
-  COALESCE(SUM(CASE WHEN r.status = 'checked_in' THEN 1 ELSE 0 END), 0) AS checked_in_count
+  COALESCE(SUM(CASE WHEN r.status = 'checked_in' THEN COALESCE(r.quantity, 1) ELSE 0 END), 0) AS checked_in_count
 `;
 
 const EVENT_FROM = `
@@ -58,6 +61,12 @@ function mapEvent(row) {
     category: row.category,
     venue: row.venue,
     city: row.city,
+    address: row.address || '',
+    latitude: row.latitude == null ? null : Number(row.latitude),
+    longitude: row.longitude == null ? null : Number(row.longitude),
+    priceCents: Number(row.price_cents || 0),
+    startingPriceCents: Number(row.starting_price_cents ?? row.price_cents ?? 0),
+    currency: row.currency || 'INR',
     imageUrl: row.image_url,
     startsAt: row.starts_at,
     endsAt: row.ends_at,
@@ -108,6 +117,10 @@ function mapRegistration(row, { mask = false } = {}) {
     interests: JSON.parse(row.interests),
     status: row.status,
     ticketCode: row.ticket_code,
+    quantity: Number(row.quantity || 1),
+    ticketLabel: row.ticket_label || 'General admission',
+    amountCents: Number(row.amount_cents || 0),
+    currency: row.currency || 'INR',
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     checkedInAt: row.checked_in_at,
@@ -131,7 +144,8 @@ function mapRegistration(row, { mask = false } = {}) {
 const REGISTRATION_SELECT = `
   SELECT
     r.id, r.event_id, r.full_name, r.email, r.organization, r.interests, r.status,
-    r.ticket_code, r.created_at, r.updated_at, r.checked_in_at,
+    r.ticket_code, r.quantity, r.ticket_label, r.amount_cents, r.currency,
+    r.created_at, r.updated_at, r.checked_in_at,
     e.title, e.slug, e.venue, e.city, e.starts_at, e.ends_at, e.image_url,
     e.status AS event_status, e.category
   FROM registrations r
@@ -146,10 +160,45 @@ export function getRegistrationById(db, id, options) {
 function occupiedCount(db, eventId) {
   return Number(
     db.prepare(
-      `SELECT COUNT(*) AS n FROM registrations
+      `SELECT COALESCE(SUM(quantity), 0) AS n FROM registrations
        WHERE event_id = ? AND status IN ('confirmed', 'checked_in')`,
     ).get(eventId).n,
   );
+}
+
+export function issueRegistration(db, fields) {
+  const insert = db.prepare(
+    `INSERT INTO registrations (
+       event_id, full_name, email, organization, interests, status, ticket_code,
+       created_at, updated_at, quantity, ticket_label, amount_cents, currency
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  );
+  const now = fields.now || new Date().toISOString();
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    const ticketCode = makeTicketCode();
+    try {
+      const info = insert.run(
+        fields.eventId,
+        fields.fullName,
+        fields.email,
+        fields.organization,
+        JSON.stringify(fields.interests),
+        fields.status,
+        ticketCode,
+        now,
+        now,
+        fields.quantity,
+        fields.ticketLabel,
+        fields.amountCents,
+        fields.currency,
+      );
+      return Number(info.lastInsertRowid);
+    } catch (error) {
+      if (isUniqueConstraint(error) && /ticket_code/i.test(error.message || '') && attempt < 4) continue;
+      throw error;
+    }
+  }
+  throw new HttpError(500, 'INTERNAL', 'Could not issue a ticket. Please try again.');
 }
 
 function makeTicketCode() {
@@ -159,7 +208,7 @@ function makeTicketCode() {
   return code;
 }
 
-function mapWriteError(error) {
+export function mapWriteError(error) {
   if (error instanceof HttpError) return error;
   if (isUniqueConstraint(error)) {
     if (/ticket_code/i.test(error.message || '')) {
@@ -238,51 +287,49 @@ export function registerForEvent(db, idOrSlug, body) {
         );
       }
 
-      const full = occupiedCount(db, raw.id) >= raw.capacity;
-      const status = full ? 'waitlisted' : 'confirmed';
-      if (full && !input.waitlist) {
+      const quote = quoteForEvent(db, raw, input.ticketTypeId, input.quantity);
+      if (quote.totalCents > 0) {
         throw new HttpError(
-          409,
-          'CAPACITY_REACHED',
-          'This event is at capacity. You can join the waitlist instead.',
+          402,
+          'PAYMENT_REQUIRED',
+          'Pay for this ticket before the registration can be confirmed.',
         );
       }
 
-      const now = new Date().toISOString();
-      const insert = db.prepare(
-        `INSERT INTO registrations (
-           event_id, full_name, email, organization, interests, status, ticket_code, created_at, updated_at
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      );
-
-      let inserted = false;
-      for (let attempt = 0; attempt < 5; attempt += 1) {
-        const ticketCode = makeTicketCode();
-        try {
-          const info = insert.run(
-            raw.id,
-            input.fullName,
-            input.email,
-            input.organization,
-            JSON.stringify(input.interests),
-            status,
-            ticketCode,
-            now,
-            now,
+      const open = raw.capacity - occupiedCount(db, raw.id) - heldSeats(db, raw.id);
+      let status = 'confirmed';
+      if (input.quantity > open) {
+        if (open <= 0 && input.quantity === 1 && input.waitlist) {
+          status = 'waitlisted';
+        } else if (open <= 0 && input.quantity === 1) {
+          throw new HttpError(
+            409,
+            'CAPACITY_REACHED',
+            'This event is at capacity. You can join the waitlist instead.',
           );
-          registrationId = Number(info.lastInsertRowid);
-          inserted = true;
-          break;
-        } catch (error) {
-          if (isUniqueConstraint(error) && /ticket_code/i.test(error.message || '') && attempt < 4) {
-            continue;
-          }
-          throw error;
+        } else {
+          throw new HttpError(
+            409,
+            'CAPACITY_REACHED',
+            open <= 0
+              ? 'This event is at capacity.'
+              : `Only ${open} seat${open === 1 ? '' : 's'} are available.`,
+          );
         }
       }
-      if (!inserted) {
-        throw new HttpError(500, 'INTERNAL', 'Could not issue a ticket. Please try again.');
-      }
+
+      registrationId = issueRegistration(db, {
+        eventId: raw.id,
+        fullName: input.fullName,
+        email: input.email,
+        organization: input.organization,
+        interests: input.interests,
+        status,
+        quantity: input.quantity,
+        ticketLabel: quote.label,
+        amountCents: 0,
+        currency: quote.currency,
+      });
     });
   } catch (error) {
     throw mapWriteError(error);
@@ -361,6 +408,10 @@ function sortClause(sort) {
       return 'e.title COLLATE NOCASE ASC';
     case 'popular':
       return 'confirmed_count DESC, e.starts_at ASC';
+    case 'price':
+      return 'starting_price_cents ASC, e.starts_at ASC';
+    case 'price_desc':
+      return 'starting_price_cents DESC, e.starts_at ASC';
     case 'soonest':
     default:
       return 'e.starts_at ASC';
@@ -390,6 +441,9 @@ export function listEvents(db, query, { admin = false } = {}) {
   const status = first(query.status);
   const from = parseQueryDate(first(query.from), 'start');
   const to = parseQueryDate(first(query.to), 'end');
+  const price = first(query.price);
+  const limit = clamp(query.limit, 1, 60, 60);
+  const offset = clamp(query.offset, 0, 5000, 0);
 
   if (admin) {
     if (status && status !== 'all') {
@@ -424,6 +478,11 @@ export function listEvents(db, query, { admin = false } = {}) {
     where.push('e.starts_at <= ?');
     params.push(to);
   }
+  if (price === 'free') {
+    where.push(`COALESCE((SELECT MIN(tt.price_cents) FROM ticket_types tt WHERE tt.event_id = e.id), e.price_cents) = 0`);
+  } else if (price === 'paid') {
+    where.push(`COALESCE((SELECT MIN(tt.price_cents) FROM ticket_types tt WHERE tt.event_id = e.id), e.price_cents) > 0`);
+  }
   if (q) {
     const like = `%${escapeLike(q)}%`;
     where.push(
@@ -434,14 +493,16 @@ export function listEvents(db, query, { admin = false } = {}) {
 
   const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
   const rows = db.prepare(
-    `SELECT ${EVENT_COLUMNS} ${EVENT_FROM} ${whereSql} GROUP BY e.id ORDER BY ${sortClause(sort)} LIMIT 60`,
-  ).all(...params);
+    `SELECT ${EVENT_COLUMNS} ${EVENT_FROM} ${whereSql} GROUP BY e.id ORDER BY ${sortClause(sort)} LIMIT ? OFFSET ?`,
+  ).all(...params, limit, offset);
   const total = Number(
     db.prepare(`SELECT COUNT(*) AS n FROM events e ${whereSql}`).get(...params).n,
   );
   return {
     events: rows.map(mapEvent),
     total,
+    limit,
+    offset,
     categories: listCategories(db, { admin }),
     cities: listCities(db, { admin }),
   };
@@ -452,18 +513,32 @@ function listCities(db, { admin = false } = {}) {
   return db.prepare(`SELECT DISTINCT city FROM events ${where} ORDER BY city ASC`).all().map((row) => row.city);
 }
 
+function withOffer(db, event) {
+  const ticketTypes = listTicketTypes(db, event.id);
+  const held = heldSeats(db, event.id);
+  const seatsRemaining = Math.max(0, event.capacity - event.confirmedCount - held);
+  return {
+    ...event,
+    ticketTypes,
+    heldSeats: held,
+    seatsRemaining,
+    registrationOpen: event.status === 'published' && !event.ended && seatsRemaining > 0,
+    waitlistOpen: event.status === 'published' && !event.ended && seatsRemaining === 0,
+  };
+}
+
 export function getPublicEvent(db, idOrSlug) {
   const row = getEventRecord(db, idOrSlug);
   if (!row || row.status === 'draft' || row.status === 'archived') {
     throw new HttpError(404, 'EVENT_NOT_FOUND', 'That event does not exist.');
   }
-  return mapEvent(row);
+  return withOffer(db, mapEvent(row));
 }
 
 export function getAdminEvent(db, idOrSlug) {
   const row = getEventRecord(db, idOrSlug);
   if (!row) throw new HttpError(404, 'EVENT_NOT_FOUND', 'That event does not exist.');
-  return mapEvent(row);
+  return withOffer(db, mapEvent(row));
 }
 
 function uniqueSlug(db, base) {
@@ -483,8 +558,9 @@ export function createEvent(db, body) {
   const info = db.prepare(
     `INSERT INTO events (
        slug, title, summary, description, category, venue, city, image_url,
-       starts_at, ends_at, capacity, status, created_at, updated_at, details
-     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       starts_at, ends_at, capacity, status, created_at, updated_at, details,
+       address, latitude, longitude, price_cents, currency
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     slug,
     data.title,
@@ -508,8 +584,15 @@ export function createEvent(db, body) {
       speakers: [],
       faqs: [],
     }),
+    data.address || '',
+    data.latitude ?? null,
+    data.longitude ?? null,
+    data.ticketTypes?.length ? startingPriceCents(data.ticketTypes, data.priceCents || 0) : (data.priceCents || 0),
+    'INR',
   );
-  return getAdminEvent(db, Number(info.lastInsertRowid));
+  const eventId = Number(info.lastInsertRowid);
+  if (data.ticketTypes) replaceTicketTypes(db, eventId, data.ticketTypes);
+  return getAdminEvent(db, eventId);
 }
 
 export function updateEvent(db, id, body) {
@@ -533,7 +616,17 @@ export function updateEvent(db, id, body) {
     endsAt: data.endsAt ?? existing.ends_at,
     capacity: data.capacity ?? existing.capacity,
     status: data.status ?? existing.status,
+    address: data.address ?? existing.address ?? '',
+    latitude: data.latitude !== undefined ? data.latitude : existing.latitude,
+    longitude: data.longitude !== undefined ? data.longitude : existing.longitude,
+    priceCents: data.priceCents ?? existing.price_cents ?? 0,
   };
+
+  if ((next.latitude == null) !== (next.longitude == null)) {
+    throw new HttpError(400, 'VALIDATION', 'Check the highlighted fields.', {
+      latitude: 'Enter both latitude and longitude, or leave both empty.',
+    });
+  }
 
   if (new Date(next.endsAt) <= new Date(next.startsAt)) {
     throw new HttpError(400, 'VALIDATION', 'Check the highlighted fields.', {
@@ -562,10 +655,14 @@ export function updateEvent(db, id, body) {
     detailsJson = JSON.stringify(details);
   }
 
+  const priceCents = data.ticketTypes?.length
+    ? startingPriceCents(data.ticketTypes, next.priceCents)
+    : next.priceCents;
   db.prepare(
     `UPDATE events
      SET title = ?, summary = ?, description = ?, category = ?, venue = ?, city = ?,
-         image_url = ?, starts_at = ?, ends_at = ?, capacity = ?, status = ?, details = ?, updated_at = ?
+         image_url = ?, starts_at = ?, ends_at = ?, capacity = ?, status = ?, details = ?,
+         address = ?, latitude = ?, longitude = ?, price_cents = ?, currency = ?, updated_at = ?
      WHERE id = ?`,
   ).run(
     next.title,
@@ -580,9 +677,15 @@ export function updateEvent(db, id, body) {
     next.capacity,
     next.status,
     detailsJson,
+    next.address,
+    next.latitude,
+    next.longitude,
+    priceCents,
+    existing.currency || 'INR',
     new Date().toISOString(),
     existing.id,
   );
+  if (data.ticketTypes) replaceTicketTypes(db, existing.id, data.ticketTypes);
   return getAdminEvent(db, existing.id);
 }
 
@@ -692,7 +795,7 @@ export function getHighlights(db) {
     `SELECT COALESCE(SUM(CASE WHEN capacity > occupied THEN capacity - occupied ELSE 0 END), 0) AS n
      FROM (
        SELECT e.capacity,
-         COALESCE(SUM(CASE WHEN r.status IN ('confirmed', 'checked_in') THEN 1 ELSE 0 END), 0) AS occupied
+         COALESCE(SUM(CASE WHEN r.status IN ('confirmed', 'checked_in') THEN COALESCE(r.quantity, 1) ELSE 0 END), 0) AS occupied
        FROM events e
        LEFT JOIN registrations r ON r.event_id = e.id
        WHERE e.status = 'published' AND e.ends_at >= ?
@@ -745,7 +848,7 @@ export function getMetrics(db) {
     `SELECT COALESCE(SUM(capacity), 0) AS capacity, COALESCE(SUM(occupied), 0) AS occupied
      FROM (
        SELECT e.capacity,
-         COALESCE(SUM(CASE WHEN r.status IN ('confirmed', 'checked_in') THEN 1 ELSE 0 END), 0) AS occupied
+         COALESCE(SUM(CASE WHEN r.status IN ('confirmed', 'checked_in') THEN COALESCE(r.quantity, 1) ELSE 0 END), 0) AS occupied
        FROM events e
        LEFT JOIN registrations r ON r.event_id = e.id
        WHERE e.status = 'published'
@@ -818,6 +921,27 @@ export function getTicket(db, code, { mask = true } = {}) {
   const row = db.prepare(`${REGISTRATION_SELECT} WHERE r.ticket_code = ?`).get(normalized);
   if (!row) throw new HttpError(404, 'NOT_FOUND', 'That ticket could not be found.');
   return mapRegistration(row, { mask });
+}
+
+export function getTicketStatus(db, code) {
+  const ticket = getTicket(db, code, { mask: true });
+  return {
+    ticketCode: ticket.ticketCode,
+    status: ticket.status,
+    valid: ticket.status === 'confirmed' || ticket.status === 'checked_in',
+    event: {
+      title: ticket.event.title,
+      startsAt: ticket.event.startsAt,
+      venue: ticket.event.venue,
+      city: ticket.event.city,
+    },
+  };
+}
+
+export function listTicketsForEmail(db, email) {
+  return db.prepare(
+    `${REGISTRATION_SELECT} WHERE r.email = ? ORDER BY r.created_at DESC, r.id DESC`,
+  ).all(email).map((row) => mapRegistration(row, { mask: true }));
 }
 
 export async function ticketSvg(ticket) {

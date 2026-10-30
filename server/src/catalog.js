@@ -213,6 +213,39 @@ export const CATALOG = [
 
 const BY_SLUG = new Map(CATALOG.map((item) => [item.slug, item]));
 
+export const PLACES = {
+  'harbor-circuit': {
+    address: 'Pier 62, Alaskan Way, Seattle, WA',
+    latitude: 47.6097,
+    longitude: -122.3594,
+  },
+  'lumen-jazz-after-code': {
+    address: '4802 N Broadway, Chicago, IL',
+    latitude: 41.9691,
+    longitude: -87.6599,
+  },
+  'paper-and-pixel': {
+    address: '35 Wooster Street, New York, NY',
+    latitude: 40.7224,
+    longitude: -74.0029,
+  },
+};
+
+export const OFFERS = {
+  'atlas-founder-forum': [
+    { name: 'Early Bird', priceCents: 99900, feeCents: 0 },
+    { name: 'Regular', priceCents: 149900, feeCents: 7500 },
+    { name: 'Group', priceCents: 119900, feeCents: 0 },
+  ],
+  'lumen-jazz-after-code': [
+    { name: 'Regular', priceCents: 35000, feeCents: 2000 },
+  ],
+  'kiln-robotics-showcase': [
+    { name: 'Early Bird', priceCents: 49900, feeCents: 0 },
+    { name: 'Regular', priceCents: 79900, feeCents: 4900 },
+  ],
+};
+
 export function presentationFor(slug) {
   return BY_SLUG.get(slug) || null;
 }
@@ -230,5 +263,38 @@ export function applyCatalog(db) {
     if (image !== row.image_url || details !== row.details) {
       write.run(image, details, item.slug);
     }
+  }
+
+  if (columns.includes('latitude')) {
+    const readPlace = db.prepare('SELECT latitude FROM events WHERE slug = ?');
+    const writePlace = db.prepare(
+      'UPDATE events SET address = ?, latitude = ?, longitude = ? WHERE slug = ? AND latitude IS NULL',
+    );
+    for (const [slug, place] of Object.entries(PLACES)) {
+      const row = readPlace.get(slug);
+      if (!row || row.latitude != null) continue;
+      writePlace.run(place.address, place.latitude, place.longitude, slug);
+    }
+    db.prepare(`UPDATE events SET address = venue || ', ' || city WHERE address = ''`).run();
+  }
+
+  const typesTable = db.prepare(
+    `SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'ticket_types'`,
+  ).get();
+  if (!typesTable) return;
+  const eventBySlug = db.prepare('SELECT id, price_cents FROM events WHERE slug = ?');
+  const typeCount = db.prepare('SELECT COUNT(*) AS n FROM ticket_types WHERE event_id = ?');
+  const insertType = db.prepare(
+    `INSERT INTO ticket_types (event_id, name, price_cents, fee_cents, currency, sort_order)
+     VALUES (?, ?, ?, ?, 'INR', ?)`,
+  );
+  const setPrice = db.prepare('UPDATE events SET price_cents = ? WHERE id = ? AND price_cents = 0');
+  for (const [slug, types] of Object.entries(OFFERS)) {
+    const event = eventBySlug.get(slug);
+    if (!event || Number(typeCount.get(event.id).n) > 0) continue;
+    types.forEach((type, index) => {
+      insertType.run(event.id, type.name, type.priceCents, type.feeCents, index);
+    });
+    setPrice.run(Math.min(...types.map((type) => type.priceCents)), event.id);
   }
 }

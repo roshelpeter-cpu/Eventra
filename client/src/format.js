@@ -87,3 +87,18 @@ export function placeLine(event) {
   if (kind === 'Online') return event.venue || 'Online';
   return `${event.venue}, ${event.city}`;
 }
+
+export function formatMoney(cents, currency = 'INR') {
+  const amount = Number(cents || 0) / 100;
+  return new Intl.NumberFormat('en-IN', {
+    style: 'currency',
+    currency,
+    maximumFractionDigits: Number.isInteger(amount) ? 0 : 2,
+  }).format(amount);
+}
+
+export function priceLabel(event) {
+  const cents = Number(event?.startingPriceCents ?? event?.priceCents ?? 0);
+  if (cents <= 0) return 'Free entry';
+  return `From ${formatMoney(cents, event.currency || 'INR')}`;
+}

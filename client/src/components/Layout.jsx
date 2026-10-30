@@ -1,6 +1,5 @@
-import { useState } from 'react';
-import { NavLink, Outlet, useNavigate } from 'react-router-dom';
-import { BrandMark, MoonIcon, SearchIcon, SunIcon } from './Icons.jsx';
+import { NavLink, Outlet } from 'react-router-dom';
+import { BrandMark, MoonIcon, SunIcon } from './Icons.jsx';
 import { useTheme } from '../theme.jsx';
 
 export function ThemeToggle() {
@@ -13,59 +12,49 @@ export function ThemeToggle() {
   );
 }
 
+function NavIcon({ name }) {
+  const paths = {
+    home: 'M4 11.5 12 4l8 7.5V20a1 1 0 0 1-1 1h-5v-6H10v6H5a1 1 0 0 1-1-1v-8.5z',
+    events: 'M7 3.5V2.2M17 3.5V2.2M4.5 8h15M6 5h12a1.5 1.5 0 0 1 1.5 1.5V19A1.5 1.5 0 0 1 18 20.5H6A1.5 1.5 0 0 1 4.5 19V6.5A1.5 1.5 0 0 1 6 5z',
+    search: 'M11 18a7 7 0 1 1 0-14 7 7 0 0 1 0 14zM16.5 16.5 21 21',
+    saved: 'M12 20s-7-4.4-7-9a4 4 0 0 1 7-2 4 4 0 0 1 7 2c0 4.6-7 9-7 9z',
+    tickets: 'M4 8.5A2.5 2.5 0 0 1 6.5 6h11A2.5 2.5 0 0 1 20 8.5V11a2 2 0 0 0 0 2v2.5A2.5 2.5 0 0 1 17.5 18h-11A2.5 2.5 0 0 1 4 15.5V13a2 2 0 0 0 0-2V8.5z',
+  };
+  return (
+    <svg width="20" height="20" viewBox="0 0 24 24" aria-hidden="true">
+      <path d={paths[name]} fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinejoin="round" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+const BOTTOM = [
+  ['/', 'Home', 'home', true],
+  ['/events', 'Events', 'events', false],
+  ['/events?focus=search', 'Search', 'search', false],
+  ['/saved', 'Saved', 'saved', false],
+  ['/tickets', 'Tickets', 'tickets', false],
+];
+
 export function PublicLayout() {
-  const [open, setOpen] = useState(false);
-  const [query, setQuery] = useState('');
-  const navigate = useNavigate();
-
-  function search(event) {
-    event.preventDefault();
-    const next = query.trim();
-    navigate(next ? `/events?q=${encodeURIComponent(next)}` : '/events');
-    setOpen(false);
-  }
-
-  function close() {
-    setOpen(false);
-  }
-
   return (
     <>
       <a className="skip-link" href="#content">Skip to content</a>
       <header className="topbar">
-        <div className={open ? 'topbar-inner open' : 'topbar-inner'}>
-          <NavLink to="/" className="brand" end onClick={close}>
+        <div className="topbar-inner">
+          <NavLink to="/" className="brand" end>
             <BrandMark />
             Eventra
           </NavLink>
-          <button
-            type="button"
-            className="btn btn-ghost btn-small menu-btn"
-            aria-expanded={open}
-            aria-controls="site-nav"
-            onClick={() => setOpen((value) => !value)}
-          >
-            {open ? 'Close' : 'Menu'}
-          </button>
-          <nav id="site-nav" className="site-nav">
-            <NavLink to="/" end onClick={close}>Home</NavLink>
-            <NavLink to="/events" onClick={close}>Events</NavLink>
-            <NavLink to="/about" onClick={close}>About</NavLink>
-            <NavLink to="/contact" onClick={close}>Contact</NavLink>
+          <nav id="site-nav" className="site-nav" aria-label="Primary">
+            <NavLink to="/" end>Home</NavLink>
+            <NavLink to="/events">Events</NavLink>
+            <NavLink to="/about">About</NavLink>
+            <NavLink to="/contact">Contact</NavLink>
           </nav>
-          <form className="nav-search" onSubmit={search} role="search">
-            <SearchIcon />
-            <input
-              aria-label="Search events"
-              placeholder="Search"
-              value={query}
-              onChange={(event) => setQuery(event.target.value)}
-            />
-          </form>
           <div className="nav-actions">
             <ThemeToggle />
-            <NavLink className="btn btn-ghost btn-small" to="/admin/login" onClick={close}>Log in</NavLink>
-            <NavLink className="btn btn-primary btn-small" to="/events" onClick={close}>Get Started</NavLink>
+            <NavLink className="btn btn-ghost btn-small" to="/admin/login">Log in</NavLink>
+            <NavLink className="btn btn-primary btn-small" to="/events">Get Started</NavLink>
           </div>
         </div>
       </header>
@@ -77,6 +66,11 @@ export function PublicLayout() {
           <div>
             <p className="brand"><BrandMark /> Eventra</p>
             <p>Discover gatherings, claim a seat, and keep a ticket that matches the registration saved in the database.</p>
+            <div className="social-row">
+              <a href="mailto:organizer@eventra.demo" aria-label="Email Eventra">Email</a>
+              <a href="https://www.linkedin.com/sharing/share-offsite/?url=http%3A%2F%2Flocalhost%3A5173" target="_blank" rel="noreferrer">LinkedIn</a>
+              <a href="https://wa.me/?text=Eventra%20http%3A%2F%2Flocalhost%3A5173" target="_blank" rel="noreferrer">WhatsApp</a>
+            </div>
           </div>
           <div>
             <h2>Explore</h2>
@@ -88,11 +82,12 @@ export function PublicLayout() {
           <div>
             <h2>Account</h2>
             <NavLink to="/admin/login">Administrator login</NavLink>
-            <NavLink to="/events">Browse events</NavLink>
+            <NavLink to="/tickets">My tickets</NavLink>
+            <NavLink to="/saved">Saved events</NavLink>
           </div>
           <div>
             <h2>Platform</h2>
-            <p>One administrator publishes every event. Visitors register without creating an account.</p>
+            <p>One administrator publishes every event. Visitors register without creating an account. Saved events stay on this device.</p>
           </div>
         </div>
         <div className="footer-bottom">
@@ -100,6 +95,14 @@ export function PublicLayout() {
           <p>Photographs stored with the app. Unsplash license.</p>
         </div>
       </footer>
+      <nav className="bottom-nav" aria-label="Mobile">
+        {BOTTOM.map(([to, label, icon, end]) => (
+          <NavLink key={label} to={to} end={end}>
+            <NavIcon name={icon} />
+            <span>{label}</span>
+          </NavLink>
+        ))}
+      </nav>
     </>
   );
 }

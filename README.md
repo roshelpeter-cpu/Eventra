@@ -315,8 +315,7 @@ Status codes used by the registration rules:
 - **Administrator sign-in fails.** Use the demo account above, or the values in `.env` if the account was created from those values. A signed-in administrator can change the password in Settings. `npm run db:reset` deletes the local database and registrations.
 - **Production refuses to create an administrator.** Set `ADMIN_PASSWORD`. The local demo password is rejected when `NODE_ENV=production`.
 - **Cookie is not kept.** Use `npm run dev` and open the Vite URL it prints (5173, or 5174 if 5173 is busy), or use `npm start` after a build and open port `4000`. Do not call the API from a different origin unless it is listed in `CLIENT_ORIGIN`.
-- **Production refuses to create an administrator.** Set `ADMIN_PASSWORD`. The local demo password is rejected when `NODE_ENV=production`.
-- **Images.** Covers are served from `client/public/covers`. A custom event can also use an `http` or `https` image URL.
+- **Images.** Covers are served from `client/public/covers`, and the demo photographs from `client/public/photos`. A custom event can also use an `http` or `https` image URL.
 
 ## Submission checklist
 

@@ -18,13 +18,31 @@ export function openDatabase(filename) {
   return db;
 }
 
+function addColumn(db, table, column, definition) {
+  const columns = db.prepare(`PRAGMA table_info(${table})`).all().map((row) => row.name);
+  if (!columns.includes(column)) {
+    db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+  }
+}
+
 export function migrate(db) {
   const schema = fs.readFileSync(path.join(__dirname, 'schema.sql'), 'utf8');
-  db.exec(schema);
-  const columns = db.prepare('PRAGMA table_info(events)').all().map((column) => column.name);
-  if (!columns.includes('details')) {
-    db.exec(`ALTER TABLE events ADD COLUMN details TEXT NOT NULL DEFAULT '{}'`);
-  }
+  const marker = '\n-- TRIGGERS\n';
+  const splitAt = schema.indexOf(marker);
+  const tables = splitAt === -1 ? schema : schema.slice(0, splitAt);
+  const triggers = splitAt === -1 ? '' : schema.slice(splitAt + marker.length);
+  db.exec(tables);
+  addColumn(db, 'events', 'details', `TEXT NOT NULL DEFAULT '{}'`);
+  addColumn(db, 'events', 'address', `TEXT NOT NULL DEFAULT ''`);
+  addColumn(db, 'events', 'latitude', 'REAL');
+  addColumn(db, 'events', 'longitude', 'REAL');
+  addColumn(db, 'events', 'price_cents', 'INTEGER NOT NULL DEFAULT 0');
+  addColumn(db, 'events', 'currency', `TEXT NOT NULL DEFAULT 'INR'`);
+  addColumn(db, 'registrations', 'quantity', 'INTEGER NOT NULL DEFAULT 1');
+  addColumn(db, 'registrations', 'ticket_label', `TEXT NOT NULL DEFAULT 'General admission'`);
+  addColumn(db, 'registrations', 'amount_cents', 'INTEGER NOT NULL DEFAULT 0');
+  addColumn(db, 'registrations', 'currency', `TEXT NOT NULL DEFAULT 'INR'`);
+  if (triggers.trim()) db.exec(triggers);
   db.exec('PRAGMA foreign_keys = ON');
 }
 
