@@ -58,10 +58,10 @@ export function SaveButton({ slug, title }) {
   );
 }
 
-export function EventCard({ event }) {
+export function EventCard({ event, emphasized = false }) {
   const used = event.capacity === 0 ? 0 : event.confirmedCount / event.capacity;
   return (
-    <article className="event-card">
+    <article className={emphasized ? 'event-card emphasis' : 'event-card'}>
       <div className="card-media">
         <Link to={`/events/${event.slug}`} tabIndex={-1} aria-hidden="true">
           <Photo className="cover" src={event.imageUrl} alt="" />
@@ -82,7 +82,7 @@ export function EventCard({ event }) {
           <strong>{priceLabel(event)}</strong>
           <span>{availability(event)}</span>
         </div>
-        <Link className="btn btn-ghost btn-small" to={`/events/${event.slug}`}>View event</Link>
+        <Link className="btn btn-ghost btn-small" to={`/events/${event.slug}`}>Details</Link>
       </div>
     </article>
   );

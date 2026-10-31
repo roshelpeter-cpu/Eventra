@@ -12,7 +12,7 @@ export function listTicketTypes(db, eventId) {
     name: row.name,
     priceCents: Number(row.price_cents),
     feeCents: Number(row.fee_cents),
-    currency: row.currency || 'INR',
+    currency: row.currency || 'USD',
     sortOrder: Number(row.sort_order),
   }));
 }
@@ -64,7 +64,7 @@ export function quoteForEvent(db, eventRow, ticketTypeId, quantity) {
     subtotalCents: unit * qty,
     feesCents: fee * qty,
     totalCents: (unit + fee) * qty,
-    currency: type?.currency || eventRow.currency || 'INR',
+    currency: type?.currency || eventRow.currency || 'USD',
   };
 }
 
@@ -76,7 +76,7 @@ export function replaceTicketTypes(db, eventId, ticketTypes) {
      VALUES (?, ?, ?, ?, ?, ?)`,
   );
   ticketTypes.forEach((type, index) => {
-    insert.run(eventId, type.name, type.priceCents, type.feeCents, type.currency || 'INR', index);
+    insert.run(eventId, type.name, type.priceCents, type.feeCents, type.currency || 'USD', index);
   });
 }
 

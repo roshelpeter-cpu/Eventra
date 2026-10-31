@@ -423,6 +423,75 @@ describe('Eventra API', { concurrency: 1 }, () => {
     assert.equal(status.json.ticket.fullName, undefined);
   });
 
+  test('verifies a demo card with a single-use development code', async () => {
+    const id = insertEvent({ title: 'Demo Checkout', capacity: 4 });
+    db.prepare(
+      `INSERT INTO ticket_types (event_id, name, price_cents, fee_cents, currency, sort_order)
+       VALUES (?, 'Regular', 4900, 0, 'USD', 0)`,
+    ).run(id);
+    const checkout = await api(`/api/events/${id}/checkout`, {
+      method: 'POST',
+      body: guest(94, { quantity: 1 }),
+    });
+    assert.equal(checkout.status, 200);
+    const publicId = checkout.json.payment.publicId;
+    const declined = await api(`/api/payments/${publicId}/card`, {
+      method: 'POST',
+      body: {
+        cardNumber: '4000000000000002',
+        cardholderName: 'Ava Carter',
+        expiry: '12/30',
+        cvv: '123',
+      },
+    });
+    assert.equal(declined.json.declined, true);
+    assert.equal(declined.json.payment.status, 'failed');
+    assert.equal(JSON.stringify(declined.json).includes('4000000000000002'), false);
+
+    const again = await api(`/api/events/${id}/checkout`, {
+      method: 'POST',
+      body: guest(94, { quantity: 1 }),
+    });
+    const nextId = again.json.payment.publicId;
+    const card = await api(`/api/payments/${nextId}/card`, {
+      method: 'POST',
+      body: {
+        cardNumber: '4242424242424242',
+        cardholderName: 'Ava Carter',
+        expiry: '12/30',
+        cvv: '123',
+      },
+    });
+    assert.equal(card.status, 200);
+    assert.equal(card.json.verification.delivery, 'development');
+    assert.match(card.json.verification.message, /no bank/i);
+    assert.equal(card.json.payment.cardLast4, '4242');
+    assert.equal(JSON.stringify(card.json).includes('4242424242424242'), false);
+    assert.equal(JSON.stringify(card.json).includes('"cvv"'), false);
+    const stored = db.prepare(`SELECT card_last4, note FROM payments WHERE public_id = ?`).get(nextId);
+    assert.equal(stored.card_last4, '4242');
+    assert.equal(String(stored.note).includes('4242'), false);
+
+    const wrong = await api(`/api/payments/${nextId}/otp/verify`, {
+      method: 'POST',
+      body: { code: card.json.verification.code === '111111' ? '222222' : '111111' },
+    });
+    assert.equal(wrong.status, 400);
+    const early = await api(`/api/payments/${nextId}/otp`, { method: 'POST', body: {} });
+    assert.equal(early.status, 429);
+    const paid = await api(`/api/payments/${nextId}/otp/verify`, {
+      method: 'POST',
+      body: { code: card.json.verification.code },
+    });
+    assert.equal(paid.status, 200);
+    assert.equal(paid.json.registration.status, 'confirmed');
+    const reused = await api(`/api/payments/${nextId}/otp/verify`, {
+      method: 'POST',
+      body: { code: card.json.verification.code },
+    });
+    assert.equal(reused.status, 409);
+  });
+
   test('limits ticket lookup codes and does not expose them in production', async () => {
     const id = insertEvent();
     const email = 'otp.guest@campus.example';

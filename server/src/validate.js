@@ -268,7 +268,7 @@ export function validateEventWrite(body, { partial = false } = {}) {
         else if (!Number.isInteger(fee) || fee < 0 || fee > 100000000) fields.ticketTypes = 'Enter a valid fee.';
         else {
           names.add(name.toLowerCase());
-          ticketTypes.push({ name, priceCents: price, feeCents: fee, currency: 'INR' });
+          ticketTypes.push({ name, priceCents: price, feeCents: fee, currency: 'USD' });
         }
       }
       if (!fields.ticketTypes) out.ticketTypes = ticketTypes;

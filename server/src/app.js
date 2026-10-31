@@ -36,10 +36,13 @@ import {
 import { requestTicketCode, subscribeEmail, verifyTicketCode } from './access.js';
 import {
   cancelPayment,
-  getPayment,
+  getPaymentView,
   handleRazorpayWebhook,
+  resendDemoOtp,
   simulatePayment,
   startCheckout,
+  submitDemoCard,
+  verifyDemoOtp,
   verifyRazorpayPayment,
 } from './payments.js';
 import { parsePositiveInt } from './validate.js';
@@ -218,11 +221,28 @@ export function createApp(db, { clientDist } = {}) {
 
   app.get('/api/payments/:publicId', (req, res, next) => {
     try {
-      res.json({ payment: getPayment(db, req.params.publicId) });
+      res.json(getPaymentView(db, req.params.publicId));
     } catch (error) {
       next(error);
     }
   });
+
+  app.post('/api/payments/:publicId/card', asyncRoute(async (req, res) => {
+    rateLimit(`pay-card:${clientIp(req)}`, 20, 15 * 60 * 1000);
+    res.json(submitDemoCard(db, req.params.publicId, req.body || {}));
+  }));
+
+  app.post('/api/payments/:publicId/otp', asyncRoute(async (req, res) => {
+    rateLimit(`pay-otp:${clientIp(req)}`, 10, 15 * 60 * 1000);
+    res.json(resendDemoOtp(db, req.params.publicId));
+  }));
+
+  app.post('/api/payments/:publicId/otp/verify', asyncRoute(async (req, res) => {
+    rateLimit(`pay-otp-verify:${clientIp(req)}`, 20, 15 * 60 * 1000);
+    const result = verifyDemoOtp(db, req.params.publicId, req.body?.code);
+    if (result.registration) result.registration = await withQr(result.registration);
+    res.json(result);
+  }));
 
   app.post('/api/payments/:publicId/simulate', asyncRoute(async (req, res) => {
     const result = simulatePayment(db, req.params.publicId, req.body?.outcome);

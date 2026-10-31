@@ -37,11 +37,13 @@ export function migrate(db) {
   addColumn(db, 'events', 'latitude', 'REAL');
   addColumn(db, 'events', 'longitude', 'REAL');
   addColumn(db, 'events', 'price_cents', 'INTEGER NOT NULL DEFAULT 0');
-  addColumn(db, 'events', 'currency', `TEXT NOT NULL DEFAULT 'INR'`);
+  addColumn(db, 'events', 'currency', `TEXT NOT NULL DEFAULT 'USD'`);
   addColumn(db, 'registrations', 'quantity', 'INTEGER NOT NULL DEFAULT 1');
   addColumn(db, 'registrations', 'ticket_label', `TEXT NOT NULL DEFAULT 'General admission'`);
   addColumn(db, 'registrations', 'amount_cents', 'INTEGER NOT NULL DEFAULT 0');
-  addColumn(db, 'registrations', 'currency', `TEXT NOT NULL DEFAULT 'INR'`);
+  addColumn(db, 'registrations', 'currency', `TEXT NOT NULL DEFAULT 'USD'`);
+  addColumn(db, 'payments', 'card_brand', 'TEXT');
+  addColumn(db, 'payments', 'card_last4', 'TEXT');
   if (triggers.trim()) db.exec(triggers);
   db.exec('PRAGMA foreign_keys = ON');
 }

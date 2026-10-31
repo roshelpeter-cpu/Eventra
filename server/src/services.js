@@ -66,7 +66,7 @@ function mapEvent(row) {
     longitude: row.longitude == null ? null : Number(row.longitude),
     priceCents: Number(row.price_cents || 0),
     startingPriceCents: Number(row.starting_price_cents ?? row.price_cents ?? 0),
-    currency: row.currency || 'INR',
+    currency: row.currency || 'USD',
     imageUrl: row.image_url,
     startsAt: row.starts_at,
     endsAt: row.ends_at,
@@ -120,7 +120,7 @@ function mapRegistration(row, { mask = false } = {}) {
     quantity: Number(row.quantity || 1),
     ticketLabel: row.ticket_label || 'General admission',
     amountCents: Number(row.amount_cents || 0),
-    currency: row.currency || 'INR',
+    currency: row.currency || 'USD',
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     checkedInAt: row.checked_in_at,
@@ -588,7 +588,7 @@ export function createEvent(db, body) {
     data.latitude ?? null,
     data.longitude ?? null,
     data.ticketTypes?.length ? startingPriceCents(data.ticketTypes, data.priceCents || 0) : (data.priceCents || 0),
-    'INR',
+    'USD',
   );
   const eventId = Number(info.lastInsertRowid);
   if (data.ticketTypes) replaceTicketTypes(db, eventId, data.ticketTypes);
@@ -681,7 +681,7 @@ export function updateEvent(db, id, body) {
     next.latitude,
     next.longitude,
     priceCents,
-    existing.currency || 'INR',
+    existing.currency || 'USD',
     new Date().toISOString(),
     existing.id,
   );

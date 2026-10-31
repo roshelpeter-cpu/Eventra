@@ -17,7 +17,7 @@ function choicesFor(event) {
     name: 'General admission',
     priceCents: event.priceCents || 0,
     feeCents: 0,
-    currency: event.currency || 'INR',
+    currency: 'USD',
   }];
 }
 
@@ -53,7 +53,7 @@ export function RegisterPage() {
   const subtotal = selected ? selected.priceCents * safeQuantity : 0;
   const fees = selected ? selected.feeCents * safeQuantity : 0;
   const total = subtotal + fees;
-  const currency = selected?.currency || 'INR';
+  const currency = 'USD';
   const waitlist = Boolean(event && event.seatsRemaining === 0 && total === 0 && !event.ended && event.status !== 'cancelled');
 
   useEffect(() => {

@@ -27,8 +27,15 @@ export function FeaturedCarousel({ events }) {
   useEffect(() => {
     const element = scroller.current;
     if (!element) return undefined;
-    element.scrollLeft = 0;
-    return undefined;
+    const align = () => {
+      const card = element.querySelector('.event-card');
+      const amount = (card?.getBoundingClientRect().width || 280) + 16;
+      const index = Math.round(element.scrollLeft / amount);
+      element.scrollTo({ left: Math.max(0, index * amount), behavior: 'auto' });
+    };
+    align();
+    window.addEventListener('resize', align);
+    return () => window.removeEventListener('resize', align);
   }, [events]);
 
   if (!events.length) return null;
@@ -47,7 +54,7 @@ export function FeaturedCarousel({ events }) {
         aria-label="Featured events"
         onKeyDown={onKeyDown}
       >
-        {events.map((event) => <EventCard key={event.id} event={event} />)}
+        {events.map((event, index) => <EventCard key={event.id} event={event} emphasized={index === 0} />)}
       </div>
     </div>
   );

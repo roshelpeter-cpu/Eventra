@@ -214,35 +214,65 @@ export const CATALOG = [
 const BY_SLUG = new Map(CATALOG.map((item) => [item.slug, item]));
 
 export const PLACES = {
+  'northline-design-summit': {
+    address: '128 NW 11th Avenue, Portland, OR 97209',
+    latitude: 45.5248,
+    longitude: -122.6823,
+  },
   'harbor-circuit': {
-    address: 'Pier 62, Alaskan Way, Seattle, WA',
+    address: 'Pier 62, Alaskan Way, Seattle, WA 98121',
     latitude: 47.6097,
     longitude: -122.3594,
   },
   'lumen-jazz-after-code': {
-    address: '4802 N Broadway, Chicago, IL',
+    address: '4802 N Broadway, Chicago, IL 60640',
     latitude: 41.9691,
     longitude: -87.6599,
   },
+  'atlas-founder-forum': {
+    address: '301 Congress Avenue, Austin, TX 78701',
+    latitude: 30.2653,
+    longitude: -97.7431,
+  },
+  'kiln-robotics-showcase': {
+    address: '1 Seaport Boulevard, Boston, MA 02210',
+    latitude: 42.3519,
+    longitude: -71.0448,
+  },
   'paper-and-pixel': {
-    address: '35 Wooster Street, New York, NY',
+    address: '35 Wooster Street, New York, NY 10013',
     latitude: 40.7224,
     longitude: -74.0029,
+  },
+  'solstice-product-retreat': {
+    address: '1119 Maroon Creek Road, Aspen, CO 81611',
+    latitude: 39.1911,
+    longitude: -106.8175,
+  },
+  'field-notes-career-studios': {
+    address: '500 S State Street, Ann Arbor, MI 48109',
+    latitude: 42.2769,
+    longitude: -83.7382,
+  },
+  'southbank-review': {
+    address: 'Belvedere Road, London SE1 8XX',
+    latitude: 51.5066,
+    longitude: -0.1164,
   },
 };
 
 export const OFFERS = {
   'atlas-founder-forum': [
-    { name: 'Early Bird', priceCents: 99900, feeCents: 0 },
-    { name: 'Regular', priceCents: 149900, feeCents: 7500 },
-    { name: 'Group', priceCents: 119900, feeCents: 0 },
+    { name: 'Early Bird', priceCents: 9900, feeCents: 0 },
+    { name: 'Regular', priceCents: 14900, feeCents: 0 },
+    { name: 'Group', priceCents: 11900, feeCents: 0 },
   ],
   'lumen-jazz-after-code': [
-    { name: 'Regular', priceCents: 35000, feeCents: 2000 },
+    { name: 'Regular', priceCents: 7900, feeCents: 0 },
   ],
   'kiln-robotics-showcase': [
-    { name: 'Early Bird', priceCents: 49900, feeCents: 0 },
-    { name: 'Regular', priceCents: 79900, feeCents: 4900 },
+    { name: 'Early Bird', priceCents: 4900, feeCents: 0 },
+    { name: 'Regular', priceCents: 9900, feeCents: 500 },
   ],
 };
 
@@ -286,15 +316,28 @@ export function applyCatalog(db) {
   const typeCount = db.prepare('SELECT COUNT(*) AS n FROM ticket_types WHERE event_id = ?');
   const insertType = db.prepare(
     `INSERT INTO ticket_types (event_id, name, price_cents, fee_cents, currency, sort_order)
-     VALUES (?, ?, ?, ?, 'INR', ?)`,
+     VALUES (?, ?, ?, ?, 'USD', ?)`,
   );
-  const setPrice = db.prepare('UPDATE events SET price_cents = ? WHERE id = ? AND price_cents = 0');
+  const syncType = db.prepare(
+    `UPDATE ticket_types SET price_cents = ?, fee_cents = ?, currency = 'USD' WHERE event_id = ? AND name = ?`,
+  );
+  const syncEvent = db.prepare(`UPDATE events SET price_cents = ?, currency = 'USD' WHERE id = ?`);
   for (const [slug, types] of Object.entries(OFFERS)) {
     const event = eventBySlug.get(slug);
-    if (!event || Number(typeCount.get(event.id).n) > 0) continue;
-    types.forEach((type, index) => {
-      insertType.run(event.id, type.name, type.priceCents, type.feeCents, index);
-    });
-    setPrice.run(Math.min(...types.map((type) => type.priceCents)), event.id);
+    if (!event) continue;
+    if (Number(typeCount.get(event.id).n) === 0) {
+      types.forEach((type, index) => {
+        insertType.run(event.id, type.name, type.priceCents, type.feeCents, index);
+      });
+    } else {
+      types.forEach((type) => {
+        syncType.run(type.priceCents, type.feeCents, event.id, type.name);
+      });
+    }
+    syncEvent.run(Math.min(...types.map((type) => type.priceCents)), event.id);
   }
+  db.prepare(`UPDATE events SET currency = 'USD' WHERE currency IS NULL OR currency = '' OR currency = 'INR'`).run();
+  db.prepare(`UPDATE ticket_types SET currency = 'USD' WHERE currency IS NULL OR currency = '' OR currency = 'INR'`).run();
+  db.prepare(`UPDATE registrations SET currency = 'USD' WHERE currency IS NULL OR currency = '' OR currency = 'INR'`).run();
+  db.prepare(`UPDATE payments SET currency = 'USD' WHERE currency IS NULL OR currency = '' OR currency = 'INR'`).run();
 }

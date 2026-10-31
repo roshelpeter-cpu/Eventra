@@ -21,7 +21,7 @@ CREATE TABLE IF NOT EXISTS events (
   latitude REAL,
   longitude REAL,
   price_cents INTEGER NOT NULL DEFAULT 0 CHECK (price_cents >= 0),
-  currency TEXT NOT NULL DEFAULT 'INR'
+  currency TEXT NOT NULL DEFAULT 'USD'
 );
 
 CREATE TABLE IF NOT EXISTS messages (
@@ -48,7 +48,7 @@ CREATE TABLE IF NOT EXISTS registrations (
   quantity INTEGER NOT NULL DEFAULT 1 CHECK (quantity >= 1 AND quantity <= 20),
   ticket_label TEXT NOT NULL DEFAULT 'General admission',
   amount_cents INTEGER NOT NULL DEFAULT 0 CHECK (amount_cents >= 0),
-  currency TEXT NOT NULL DEFAULT 'INR',
+  currency TEXT NOT NULL DEFAULT 'USD',
   UNIQUE (event_id, email)
 );
 
@@ -81,7 +81,7 @@ CREATE TABLE IF NOT EXISTS ticket_types (
   name TEXT NOT NULL,
   price_cents INTEGER NOT NULL CHECK (price_cents >= 0),
   fee_cents INTEGER NOT NULL DEFAULT 0 CHECK (fee_cents >= 0),
-  currency TEXT NOT NULL DEFAULT 'INR',
+  currency TEXT NOT NULL DEFAULT 'USD',
   sort_order INTEGER NOT NULL DEFAULT 0,
   UNIQUE (event_id, name)
 );

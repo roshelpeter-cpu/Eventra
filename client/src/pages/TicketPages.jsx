@@ -70,7 +70,7 @@ export function ConfirmationPage() {
         {error ? <ErrorBlock message={error} onRetry={() => setAttempt((value) => value + 1)} /> : null}
         {ticket ? (
           <section className="success-card">
-            <div className="check" aria-hidden="true">✓</div>
+            <div className="check check-draw" aria-hidden="true">✓</div>
             <h1>Registration Successful!</h1>
             <p className="muted">{messageFor(ticket.status)}</p>
             <p><strong>{ticket.fullName}</strong></p>

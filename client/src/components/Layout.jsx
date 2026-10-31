@@ -51,10 +51,10 @@ export function PublicLayout() {
             <NavLink to="/about">About</NavLink>
             <NavLink to="/contact">Contact</NavLink>
           </nav>
-          <div className="nav-actions">
+          <div className="nav-tools">
             <ThemeToggle />
             <NavLink className="btn btn-ghost btn-small" to="/admin/login">Log in</NavLink>
-            <NavLink className="btn btn-primary btn-small" to="/events">Get Started</NavLink>
+            <NavLink className="btn btn-primary btn-small nav-start" to="/events" end>Get Started</NavLink>
           </div>
         </div>
       </header>

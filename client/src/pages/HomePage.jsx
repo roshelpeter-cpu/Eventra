@@ -36,6 +36,24 @@ export function HomePage() {
     return () => controller.abort();
   }, []);
 
+  useEffect(() => {
+    const nodes = document.querySelectorAll('.home-page .reveal');
+    if (!nodes.length) return undefined;
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      nodes.forEach((node) => node.classList.add('in'));
+      return undefined;
+    }
+    const observer = new IntersectionObserver((entries) => {
+      entries.forEach((entry) => {
+        if (!entry.isIntersecting) return;
+        entry.target.classList.add('in');
+        observer.unobserve(entry.target);
+      });
+    }, { threshold: 0.14, rootMargin: '0px 0px -8% 0px' });
+    nodes.forEach((node) => observer.observe(node));
+    return () => observer.disconnect();
+  }, [loading, events.length]);
+
   function search(event) {
     event.preventDefault();
     const next = query.trim();
@@ -57,9 +75,17 @@ export function HomePage() {
     }
   }
 
-  const featured = events.slice(0, 8);
-  const upcoming = [...events].sort((a, b) => new Date(a.startsAt) - new Date(b.startsAt)).slice(0, 3);
-  const popular = [...events].sort((a, b) => b.confirmedCount - a.confirmedCount).slice(0, 3);
+  const featured = events.slice(0, 5);
+  const featuredIds = new Set(featured.map((event) => event.id));
+  const upcoming = [...events]
+    .filter((event) => !featuredIds.has(event.id))
+    .sort((a, b) => new Date(a.startsAt) - new Date(b.startsAt))
+    .slice(0, 6);
+  const upcomingIds = new Set(upcoming.map((event) => event.id));
+  const popular = [...events]
+    .filter((event) => !featuredIds.has(event.id) && !upcomingIds.has(event.id) && event.confirmedCount > 0)
+    .sort((a, b) => b.confirmedCount - a.confirmedCount)
+    .slice(0, 3);
   const counts = new Map();
   events.forEach((event) => counts.set(event.category, (counts.get(event.category) || 0) + 1));
   const coverFor = (category) => events.find((event) => event.category === category)?.imageUrl;
@@ -106,7 +132,7 @@ export function HomePage() {
           ) : null}
         </section>
 
-        <section className="stat-row" aria-label="Platform numbers from the database">
+        <section className="stat-row reveal" aria-label="Platform numbers from the database">
           <article className="stat">
             <span className="stat-icon"><StatIcon name="events" /></span>
             <div><span>Upcoming events</span><strong>{highlights ? highlights.upcoming : '—'}</strong></div>
@@ -125,7 +151,7 @@ export function HomePage() {
           </article>
         </section>
 
-        <div className="section-head">
+        <div className="section-head reveal">
           <div>
             <p className="kicker">Featured</p>
             <h2>Featured Events</h2>
@@ -138,7 +164,7 @@ export function HomePage() {
         ) : null}
         {!loading && !error && featured.length > 0 ? <FeaturedCarousel events={featured} /> : null}
 
-        <div className="section-head">
+        <div className="section-head reveal">
           <div>
             <p className="kicker">Coming up</p>
             <h2>Upcoming Events</h2>
@@ -155,7 +181,7 @@ export function HomePage() {
 
         {popular.some((event) => event.confirmedCount > 0) ? (
           <>
-            <div className="section-head">
+            <div className="section-head reveal">
               <div>
                 <p className="kicker">Popular</p>
                 <h2>Most registered</h2>
@@ -167,7 +193,7 @@ export function HomePage() {
           </>
         ) : null}
 
-        <div className="section-head">
+        <div className="section-head reveal">
           <div>
             <p className="kicker">Categories</p>
             <h2>Browse by interest</h2>
@@ -185,7 +211,7 @@ export function HomePage() {
           ))}
         </div>
 
-        <section className="newsletter">
+        <section className="newsletter reveal">
           <div>
             <p className="kicker">Announcements</p>
             <h2>Hear about newly published events</h2>

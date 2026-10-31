@@ -88,11 +88,26 @@ export function placeLine(event) {
   return `${event.venue}, ${event.city}`;
 }
 
-export function formatMoney(cents, currency = 'INR') {
+const COUNTRY_BY_CITY = {
+  London: 'United Kingdom',
+  Montreal: 'Canada',
+  Portland: 'United States',
+  Seattle: 'United States',
+  Chicago: 'United States',
+  Austin: 'United States',
+  Boston: 'United States',
+  'New York': 'United States',
+  Aspen: 'United States',
+  'Ann Arbor': 'United States',
+  Denver: 'United States',
+  'San Francisco': 'United States',
+};
+
+export function formatMoney(cents) {
   const amount = Number(cents || 0) / 100;
-  return new Intl.NumberFormat('en-IN', {
+  return new Intl.NumberFormat('en-US', {
     style: 'currency',
-    currency,
+    currency: 'USD',
     maximumFractionDigits: Number.isInteger(amount) ? 0 : 2,
   }).format(amount);
 }
@@ -100,5 +115,17 @@ export function formatMoney(cents, currency = 'INR') {
 export function priceLabel(event) {
   const cents = Number(event?.startingPriceCents ?? event?.priceCents ?? 0);
   if (cents <= 0) return 'Free entry';
-  return `From ${formatMoney(cents, event.currency || 'INR')}`;
+  return `From ${formatMoney(cents)}`;
+}
+
+export function venueFacts(event) {
+  const address = event?.address || placeLine(event);
+  const country = COUNTRY_BY_CITY[event?.city] || '';
+  return {
+    venue: event?.venue || 'Venue',
+    address,
+    city: event?.city || '',
+    country,
+    line: [event?.city, country].filter(Boolean).join(', '),
+  };
 }
