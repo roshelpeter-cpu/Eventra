@@ -247,6 +247,7 @@ ul { margin: 0; padding: 0; list-style: none; }
 }
 .hero-search input { border: 0; background: transparent; flex: 1; min-width: 0; padding: 10px 4px; border-radius: 0; }
 .chips, .chip-row { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 16px; }
+.chip-row.filter-chips { margin-top: 0; margin-bottom: 20px; }
 .chip {
   display: inline-flex;
   align-items: center;
@@ -388,7 +389,7 @@ ul { margin: 0; padding: 0; list-style: none; }
 .count-list { display: grid; gap: 6px; }
 .count-list button { display: flex; justify-content: space-between; width: 100%; text-align: left; }
 .explore-head h1 { font-size: clamp(1.8rem, 3vw, 2.4rem); letter-spacing: -0.045em; }
-.result-row { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin: 8px 0 14px; }
+.result-row { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin: 0 0 16px; }
 .filter-toggle { display: none; }
 
 .detail {
@@ -908,6 +909,19 @@ ul { margin: 0; padding: 0; list-style: none; }
 .check-bad { background: var(--danger-bg); color: var(--danger); }
 .ticket-results { margin-top: 16px; }
 .ticket-result { display: grid; gap: 4px; padding: 14px 16px; }
+.ticket-list { display: grid; gap: 16px; margin-top: 18px; }
+.ticket-card {
+  display: grid;
+  grid-template-columns: 168px minmax(0, 1fr);
+  gap: 16px;
+  padding: 14px;
+  align-items: start;
+}
+.ticket-card .ticket-photo { height: 148px; width: 100%; object-fit: cover; border-radius: 14px; }
+.ticket-body { display: grid; gap: 6px; min-width: 0; }
+.ticket-body h2 { font-size: 1.2rem; letter-spacing: -0.03em; }
+.ticket-card img.qr { width: 112px; height: 112px; background: white; border-radius: 12px; padding: 6px; }
+.ticket-card .actions { margin-top: 6px; }
 .mobile-cta, .bottom-nav { display: none; }
 
 @keyframes hero-reveal { from { opacity: 0; transform: scale(1.04); } to { opacity: 1; transform: none; } }
@@ -998,6 +1012,8 @@ ul { margin: 0; padding: 0; list-style: none; }
 }
 @media (max-width: 640px) {
   .footer-grid, .event-grid { grid-template-columns: 1fr; }
+  .ticket-card { grid-template-columns: 1fr; }
+  .ticket-card .ticket-photo { height: 168px; }
 }
 @media (min-width: 641px) and (max-width: 760px) {
   .event-grid { grid-template-columns: 1fr 1fr; }

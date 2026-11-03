@@ -1,24 +1,8 @@
-import nodemailer from 'nodemailer';
+import { Resend } from 'resend';
 import { HttpError } from './errors.js';
 
 const testInbox = [];
 let failNextDelivery = false;
-
-function smtpSettings() {
-  return {
-    host: process.env.SMTP_HOST || '',
-    port: Number(process.env.SMTP_PORT || 587),
-    user: process.env.SMTP_USER || '',
-    pass: process.env.SMTP_PASSWORD || '',
-    fromEmail: process.env.SMTP_FROM_EMAIL || '',
-    fromName: process.env.SMTP_FROM_NAME || 'Eventra',
-  };
-}
-
-export function smtpConfigured() {
-  const settings = smtpSettings();
-  return Boolean(settings.host && settings.user && settings.pass && settings.fromEmail);
-}
 
 export function lastTestEmail() {
   return testInbox.at(-1) || null;
@@ -42,14 +26,39 @@ function escapeHtml(value) {
   }[char]));
 }
 
-function verificationLetter({ guestName, eventName, code }) {
-  const name = escapeHtml(guestName);
-  const event = escapeHtml(eventName);
+function deliveryError() {
+  return new HttpError(503, 'DELIVERY_UNAVAILABLE', 'We could not send a verification code. Please try again.');
+}
+
+function credentialsReady() {
+  return Boolean(String(process.env.RESEND_API_KEY || '').trim() && String(process.env.EMAIL_FROM || '').trim());
+}
+
+function senderAddress() {
+  const from = String(process.env.EMAIL_FROM || '').trim();
+  if (from.includes('<') && from.endsWith('>')) return from;
+  return `Eventra <${from}>`;
+}
+
+function verificationLetter({ kind, guestName, eventName, code }) {
+  const registration = kind !== 'tickets';
+  const hello = registration ? `Hello ${guestName},` : 'Hello,';
+  const intro = registration
+    ? `You are one step away from confirming your registration for ${eventName}.`
+    : 'Use this code to view the Eventra tickets registered to this email address.';
+  const ignore = registration
+    ? 'If you did not initiate this registration, you can safely ignore this email.'
+    : 'If you did not request access to these tickets, you can safely ignore this email.';
+  const security = 'Eventra will never ask you to share this code.';
+  const safeHello = registration ? `Hello ${escapeHtml(guestName)},` : 'Hello,';
+  const safeIntro = registration
+    ? `You are one step away from confirming your registration for <strong>${escapeHtml(eventName)}</strong>.`
+    : 'Use this code to view the Eventra tickets registered to this email address.';
   const otp = escapeHtml(code);
   const text = [
-    `Hello ${guestName},`,
+    hello,
     '',
-    `You are one step away from confirming your registration for ${eventName}.`,
+    intro,
     '',
     'Your Eventra verification code is:',
     '',
@@ -57,7 +66,8 @@ function verificationLetter({ guestName, eventName, code }) {
     '',
     'This code expires in 5 minutes.',
     '',
-    'If you did not initiate this registration, you can safely ignore this email.',
+    ignore,
+    security,
     '',
     'Thank you,',
     'Eventra Team',
@@ -76,12 +86,13 @@ function verificationLetter({ guestName, eventName, code }) {
             </tr>
             <tr>
               <td style="padding:8px 28px 28px;line-height:1.55;">
-                <p style="margin:0 0 16px;">Hello ${name},</p>
-                <p style="margin:0 0 16px;">You are one step away from confirming your registration for <strong>${event}</strong>.</p>
+                <p style="margin:0 0 16px;">${safeHello}</p>
+                <p style="margin:0 0 16px;">${safeIntro}</p>
                 <p style="margin:0 0 8px;color:#55637a;">Your Eventra verification code is:</p>
                 <p style="margin:0 0 16px;font-size:32px;font-weight:800;letter-spacing:0.18em;color:#2d4fe0;">${otp}</p>
                 <p style="margin:0 0 16px;">This code expires in 5 minutes.</p>
-                <p style="margin:0 0 16px;color:#55637a;">If you did not initiate this registration, you can safely ignore this email.</p>
+                <p style="margin:0 0 8px;color:#55637a;">${escapeHtml(ignore)}</p>
+                <p style="margin:0 0 16px;color:#55637a;">${escapeHtml(security)}</p>
                 <p style="margin:0;">Thank you,<br>Eventra Team</p>
               </td>
             </tr>
@@ -94,58 +105,42 @@ function verificationLetter({ guestName, eventName, code }) {
   return { text, html };
 }
 
-function deliveryError() {
-  return new HttpError(503, 'DELIVERY_UNAVAILABLE', 'We could not send a verification code. Please try again.');
-}
+export async function sendVerificationEmail({ to, guestName, eventName, code, kind = 'registration' }) {
+  const letter = verificationLetter({ kind, guestName, eventName, code });
+  const subject = kind === 'tickets' ? 'Your Eventra Ticket Access Code' : 'Your Eventra Verification Code';
 
-export async function sendVerificationEmail({ to, guestName, eventName, code }) {
+  // Automated tests read this inbox. The application process never uses it.
   if (process.env.NODE_ENV === 'test') {
     if (failNextDelivery) {
       failNextDelivery = false;
       throw deliveryError();
     }
-    testInbox.push({
-      to,
-      guestName,
-      eventName,
-      code,
-      subject: 'Your Eventra Verification Code',
-    });
+    testInbox.push({ to, subject, kind, code, text: letter.text });
     return { accepted: true };
   }
 
-  if (!smtpConfigured()) {
-    console.error('SMTP is not configured. Set SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASSWORD, SMTP_FROM_EMAIL, and SMTP_FROM_NAME.');
+  if (!credentialsReady()) {
+    console.error('Resend is not configured. Set RESEND_API_KEY and EMAIL_FROM.');
     throw deliveryError();
   }
 
-  const settings = smtpSettings();
-  const transporter = nodemailer.createTransport({
-    host: settings.host,
-    port: settings.port,
-    secure: settings.port === 465,
-    auth: {
-      user: settings.user,
-      pass: settings.pass,
-    },
-  });
-  const letter = verificationLetter({ guestName, eventName, code });
   try {
-    const info = await transporter.sendMail({
-      from: `"${settings.fromName.replace(/"/g, '')}" <${settings.fromEmail}>`,
+    const resend = new Resend(String(process.env.RESEND_API_KEY).trim());
+    const { data, error } = await resend.emails.send({
+      from: senderAddress(),
       to,
-      subject: 'Your Eventra Verification Code',
+      subject,
       text: letter.text,
       html: letter.html,
     });
-    if (info.rejected?.length) {
-      console.error('Verification email was rejected by the mail server.');
+    if (error || !data?.id) {
+      console.error('Verification email was not accepted by Resend.', error?.statusCode || error?.name || 'send_failed');
       throw deliveryError();
     }
     return { accepted: true };
   } catch (error) {
     if (error instanceof HttpError) throw error;
-    console.error('Verification email could not be sent.', error?.code || 'send_failed');
+    console.error('Verification email was not accepted by Resend.', error?.statusCode || error?.name || 'send_failed');
     throw deliveryError();
   }
 }

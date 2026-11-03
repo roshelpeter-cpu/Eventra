@@ -922,6 +922,12 @@ export function getTicket(db, code, { mask = true } = {}) {
   return mapRegistration(row, { mask });
 }
 
+export function listTicketsForEmail(db, email) {
+  return db.prepare(
+    `${REGISTRATION_SELECT} WHERE r.email = ? ORDER BY e.starts_at DESC, r.id DESC`,
+  ).all(email).map((row) => mapRegistration(row, { mask: true }));
+}
+
 export function getTicketStatus(db, code) {
   const ticket = getTicket(db, code, { mask: true });
   return {

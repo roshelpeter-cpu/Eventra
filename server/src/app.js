@@ -33,7 +33,7 @@ import {
   updateRegistrationStatus,
   withQr,
 } from './services.js';
-import { findTicket, subscribeEmail } from './access.js';
+import { listVerifiedTickets, requestTicketAccess, subscribeEmail, verifyTicketAccess } from './access.js';
 import {
   cancelPayment,
   getPaymentView,
@@ -201,10 +201,27 @@ export function createApp(db, { clientDist } = {}) {
     res.send(svg);
   }));
 
-  app.post('/api/tickets/lookup', asyncRoute(async (req, res) => {
-    rateLimit(`ticket-lookup:${clientIp(req)}`, 20, 15 * 60 * 1000);
-    const ticket = await withQr(findTicket(db, req.body?.email, req.body?.ticketCode));
-    res.json({ ticket });
+  app.post('/api/tickets/otp', asyncRoute(async (req, res) => {
+    rateLimit(`ticket-otp:${clientIp(req)}`, 8, 15 * 60 * 1000);
+    res.json(await requestTicketAccess(db, req.body?.email));
+  }));
+
+  app.post('/api/tickets/otp/verify', asyncRoute(async (req, res) => {
+    rateLimit(`ticket-otp-verify:${clientIp(req)}`, 12, 15 * 60 * 1000);
+    const access = verifyTicketAccess(db, req.body?.email, req.body?.code);
+    const tickets = await Promise.all(access.tickets.map((ticket) => withQr(ticket)));
+    res.json({
+      accessToken: access.accessToken,
+      expiresAt: access.expiresAt,
+      maskedEmail: access.maskedEmail,
+      tickets,
+    });
+  }));
+
+  app.post('/api/tickets/list', asyncRoute(async (req, res) => {
+    rateLimit(`ticket-list:${clientIp(req)}`, 30, 15 * 60 * 1000);
+    const tickets = await Promise.all(listVerifiedTickets(db, req.body?.accessToken).map((ticket) => withQr(ticket)));
+    res.json({ tickets });
   }));
 
   app.get('/api/payments/:publicId', (req, res, next) => {
