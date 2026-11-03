@@ -14,7 +14,7 @@ export function AboutPage() {
         <div className="category-grid">
           <article className="info-card">
             <h2>Discover</h2>
-            <p className="muted">Search by title, topic, or location, then filter by category, date, and city. Every card reads from the database.</p>
+            <p className="muted">Search by title, topic, or location, then filter by category, date, and city.</p>
           </article>
           <article className="info-card">
             <h2>Register</h2>

@@ -1,8 +1,6 @@
-import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { availability } from '../constants.js';
 import { dateParts, eventFormat, formatTimeRange, placeLine, priceLabel } from '../format.js';
-import { isSaved, toggleSaved } from '../saved.js';
 import { ClockIcon, PinIcon } from './Icons.jsx';
 import { Meter } from './ui.jsx';
 
@@ -29,35 +27,6 @@ export function DateBadge({ iso }) {
   );
 }
 
-function HeartIcon({ filled }) {
-  return (
-    <svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true">
-      <path d="M12 20s-7-4.4-7-9a4 4 0 0 1 7-2 4 4 0 0 1 7 2c0 4.6-7 9-7 9z" fill={filled ? 'currentColor' : 'none'} stroke="currentColor" strokeWidth="1.7" />
-    </svg>
-  );
-}
-
-export function SaveButton({ slug, title }) {
-  const [saved, setSaved] = useState(() => isSaved(slug));
-  useEffect(() => {
-    const sync = () => setSaved(isSaved(slug));
-    window.addEventListener('eventra-saved', sync);
-    return () => window.removeEventListener('eventra-saved', sync);
-  }, [slug]);
-
-  return (
-    <button
-      type="button"
-      className={saved ? 'fav on' : 'fav'}
-      aria-pressed={saved}
-      aria-label={saved ? `Remove ${title} from saved events` : `Save ${title}`}
-      onClick={() => setSaved(toggleSaved(slug))}
-    >
-      <HeartIcon filled={saved} />
-    </button>
-  );
-}
-
 export function EventCard({ event, emphasized = false }) {
   const used = event.capacity === 0 ? 0 : event.confirmedCount / event.capacity;
   return (
@@ -67,7 +36,6 @@ export function EventCard({ event, emphasized = false }) {
           <Photo className="cover" src={event.imageUrl} alt="" />
         </Link>
         <DateBadge iso={event.startsAt} />
-        <SaveButton slug={event.slug} title={event.title} />
       </div>
       <div className="body">
         <h3><Link to={`/events/${event.slug}`}>{event.title}</Link></h3>

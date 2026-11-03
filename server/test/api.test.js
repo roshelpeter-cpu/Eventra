@@ -8,6 +8,7 @@ import { createAdmin } from '../src/auth.js';
 import { createApp } from '../src/app.js';
 import { migrate, openDatabase } from '../src/db.js';
 import { initializeDatabase } from '../src/seed.js';
+import { clearTestInbox, failNextEmail, lastTestEmail } from '../src/mail.js';
 import { registerForEvent } from '../src/services.js';
 
 process.env.NODE_ENV = 'test';
@@ -423,8 +424,8 @@ describe('Eventra API', { concurrency: 1 }, () => {
     assert.equal(status.json.ticket.fullName, undefined);
   });
 
-  test('verifies a demo card with a single-use development code', async () => {
-    const id = insertEvent({ title: 'Demo Checkout', capacity: 4 });
+  test('confirms a simulated checkout only after a single-use emailed code', async () => {
+    const id = insertEvent({ title: 'Checkout Gathering', capacity: 4 });
     db.prepare(
       `INSERT INTO ticket_types (event_id, name, price_cents, fee_cents, currency, sort_order)
        VALUES (?, 'Regular', 4900, 0, 'USD', 0)`,
@@ -435,131 +436,134 @@ describe('Eventra API', { concurrency: 1 }, () => {
     });
     assert.equal(checkout.status, 200);
     const publicId = checkout.json.payment.publicId;
-    const declined = await api(`/api/payments/${publicId}/card`, {
+    clearTestInbox();
+    failNextEmail();
+    const undelivered = await api(`/api/payments/${publicId}/card`, {
       method: 'POST',
       body: {
-        cardNumber: '4000000000000002',
+        cardLast4: '4242',
+        cardBrand: 'Visa',
         cardholderName: 'Ava Carter',
-        expiry: '12/30',
-        cvv: '123',
-      },
-    });
-    assert.equal(declined.json.declined, true);
-    assert.equal(declined.json.payment.status, 'failed');
-    assert.equal(JSON.stringify(declined.json).includes('4000000000000002'), false);
-
-    const again = await api(`/api/events/${id}/checkout`, {
-      method: 'POST',
-      body: guest(94, { quantity: 1 }),
-    });
-    const nextId = again.json.payment.publicId;
-    const card = await api(`/api/payments/${nextId}/card`, {
-      method: 'POST',
-      body: {
         cardNumber: '4242424242424242',
-        cardholderName: 'Ava Carter',
-        expiry: '12/30',
         cvv: '123',
       },
     });
-    assert.equal(card.status, 200);
-    assert.equal(card.json.verification.delivery, 'development');
-    assert.match(card.json.verification.message, /no bank/i);
-    assert.equal(card.json.payment.cardLast4, '4242');
-    assert.equal(JSON.stringify(card.json).includes('4242424242424242'), false);
-    assert.equal(JSON.stringify(card.json).includes('"cvv"'), false);
-    const stored = db.prepare(`SELECT card_last4, note FROM payments WHERE public_id = ?`).get(nextId);
-    assert.equal(stored.card_last4, '4242');
-    assert.equal(String(stored.note).includes('4242'), false);
+    assert.equal(undelivered.status, 503);
+    assert.equal(undelivered.json.error.code, 'DELIVERY_UNAVAILABLE');
+    assert.equal(db.prepare(`SELECT COUNT(*) AS n FROM verification_codes WHERE subject = ?`).get(publicId).n, 0);
+    assert.equal(db.prepare(`SELECT status FROM payments WHERE public_id = ?`).get(publicId).status, 'pending');
+    assert.equal(db.prepare(`SELECT COUNT(*) AS n FROM registrations WHERE event_id = ?`).get(id).n, 0);
 
-    const wrong = await api(`/api/payments/${nextId}/otp/verify`, {
+    clearTestInbox();
+    const card = await api(`/api/payments/${publicId}/card`, {
       method: 'POST',
-      body: { code: card.json.verification.code === '111111' ? '222222' : '111111' },
+      body: {
+        cardLast4: '4242',
+        cardBrand: 'Visa',
+        cardholderName: 'Ava Carter',
+        cardNumber: '4242424242424242',
+        cvv: '123',
+      },
+    });
+    const mailed = lastTestEmail();
+    assert.equal(card.status, 200);
+    assert.equal(card.json.verification.sent, true);
+    assert.equal(card.json.verification.code, undefined);
+    assert.equal(mailed.subject, 'Your Eventra Verification Code');
+    assert.match(mailed.code, /^\d{6}$/);
+    assert.equal(JSON.stringify(card.json).includes(mailed.code), false);
+    assert.equal(JSON.stringify(card.json).includes('4242424242424242'), false);
+    assert.equal(card.json.payment.cardLast4, '4242');
+    const stored = db.prepare(`SELECT * FROM payments WHERE public_id = ?`).get(publicId);
+    assert.equal(stored.card_last4, '4242');
+    assert.equal(JSON.stringify(stored).includes('4242424242424242'), false);
+    const hashed = db.prepare(
+      `SELECT code_hash FROM verification_codes WHERE subject = ? ORDER BY id DESC LIMIT 1`,
+    ).get(publicId);
+    assert.notEqual(hashed.code_hash, mailed.code);
+    assert.equal(hashed.code_hash.includes(mailed.code), false);
+
+    const wrongCode = mailed.code === '111111' ? '222222' : '111111';
+    const wrong = await api(`/api/payments/${publicId}/otp/verify`, {
+      method: 'POST',
+      body: { code: wrongCode },
     });
     assert.equal(wrong.status, 400);
-    const early = await api(`/api/payments/${nextId}/otp`, { method: 'POST', body: {} });
+    assert.equal(wrong.json.error.code, 'CODE_INVALID');
+    const early = await api(`/api/payments/${publicId}/otp`, { method: 'POST', body: {} });
     assert.equal(early.status, 429);
-    const paid = await api(`/api/payments/${nextId}/otp/verify`, {
+
+    db.prepare(
+      `UPDATE verification_codes SET expires_at = ? WHERE id = (SELECT MAX(id) FROM verification_codes WHERE subject = ?)`,
+    ).run(new Date(Date.now() - 1000).toISOString(), publicId);
+    const expired = await api(`/api/payments/${publicId}/otp/verify`, {
       method: 'POST',
-      body: { code: card.json.verification.code },
+      body: { code: mailed.code },
+    });
+    assert.equal(expired.status, 400);
+    assert.equal(expired.json.error.code, 'CODE_EXPIRED');
+    assert.equal(db.prepare(`SELECT COUNT(*) AS n FROM registrations WHERE event_id = ?`).get(id).n, 0);
+
+    db.prepare(`UPDATE verification_codes SET created_at = ? WHERE subject = ?`).run(
+      new Date(Date.now() - 2 * 60 * 1000).toISOString(),
+      publicId,
+    );
+    const resent = await api(`/api/payments/${publicId}/otp`, { method: 'POST', body: {} });
+    const replacement = lastTestEmail();
+    assert.equal(resent.status, 200);
+    assert.equal(resent.json.verification.code, undefined);
+    assert.notEqual(replacement.code, mailed.code);
+    assert.equal(JSON.stringify(resent.json).includes(replacement.code), false);
+    const stale = await api(`/api/payments/${publicId}/otp/verify`, {
+      method: 'POST',
+      body: { code: mailed.code },
+    });
+    assert.equal(stale.status, 400);
+
+    const paid = await api(`/api/payments/${publicId}/otp/verify`, {
+      method: 'POST',
+      body: { code: replacement.code },
     });
     assert.equal(paid.status, 200);
     assert.equal(paid.json.registration.status, 'confirmed');
-    const reused = await api(`/api/payments/${nextId}/otp/verify`, {
+    assert.equal(paid.json.payment.note, '');
+    assert.equal(db.prepare(`SELECT COUNT(*) AS n FROM registrations WHERE event_id = ?`).get(id).n, 1);
+    assert.equal(
+      db.prepare(`SELECT COALESCE(SUM(quantity), 0) AS n FROM registrations WHERE event_id = ? AND status = 'confirmed'`).get(id).n,
+      1,
+    );
+    const reused = await api(`/api/payments/${publicId}/otp/verify`, {
       method: 'POST',
-      body: { code: card.json.verification.code },
+      body: { code: replacement.code },
     });
-    assert.equal(reused.status, 409);
+    assert.equal(reused.status, 200);
+    assert.equal(reused.json.registration.ticketCode, paid.json.registration.ticketCode);
+    assert.equal(db.prepare(`SELECT COUNT(*) AS n FROM registrations WHERE event_id = ?`).get(id).n, 1);
   });
 
-  test('limits ticket lookup codes and does not expose them in production', async () => {
+  test('retrieves a ticket from the registered email and ticket reference', async () => {
     const id = insertEvent();
     const email = 'otp.guest@campus.example';
     const created = await api(`/api/events/${id}/registrations`, {
       method: 'POST',
       body: guest(93, { email, fullName: 'Otp Guest' }),
     });
-    const requested = await api('/api/tickets/access', { method: 'POST', body: { email } });
-    assert.equal(requested.json.delivery, 'development');
-    assert.match(requested.json.message, /not emailed/i);
-    const tooSoon = await api('/api/tickets/access', { method: 'POST', body: { email } });
-    assert.equal(tooSoon.status, 429);
-
-    const badCode = requested.json.code === '111111' ? '222222' : '111111';
-    for (let attempt = 0; attempt < 5; attempt += 1) {
-      const wrong = await api('/api/tickets/access/verify', {
-        method: 'POST',
-        body: { email, code: badCode },
-      });
-      assert.equal(wrong.status, 400);
-    }
-    const locked = await api('/api/tickets/access/verify', {
+    const ticketCode = created.json.registration.ticketCode;
+    const missing = await api('/api/tickets/lookup', {
       method: 'POST',
-      body: { email, code: requested.json.code },
+      body: { email: 'someone.else@campus.example', ticketCode },
     });
-    assert.equal(locked.status, 400);
-
-    db.prepare(`UPDATE verification_codes SET created_at = ? WHERE subject = ?`).run(
-      new Date(Date.now() - 2 * 60 * 1000).toISOString(),
-      email,
-    );
-    const renewed = await api('/api/tickets/access', { method: 'POST', body: { email } });
-    assert.equal(renewed.status, 200);
-    db.prepare(
-      `UPDATE verification_codes SET expires_at = ? WHERE id = (SELECT MAX(id) FROM verification_codes WHERE subject = ?)`,
-    ).run(new Date(Date.now() - 1000).toISOString(), email);
-    const expired = await api('/api/tickets/access/verify', {
+    assert.equal(missing.status, 404);
+    const opened = await api('/api/tickets/lookup', {
       method: 'POST',
-      body: { email, code: renewed.json.code },
-    });
-    assert.equal(expired.status, 400);
-
-    db.prepare(`UPDATE verification_codes SET created_at = ? WHERE subject = ?`).run(
-      new Date(Date.now() - 2 * 60 * 1000).toISOString(),
-      email,
-    );
-    const fresh = await api('/api/tickets/access', { method: 'POST', body: { email } });
-    const opened = await api('/api/tickets/access/verify', {
-      method: 'POST',
-      body: { email, code: fresh.json.code },
+      body: { email, ticketCode },
     });
     assert.equal(opened.status, 200);
-    assert.equal(opened.json.tickets[0].ticketCode, created.json.registration.ticketCode);
-    const reused = await api('/api/tickets/access/verify', {
-      method: 'POST',
-      body: { email, code: fresh.json.code },
-    });
-    assert.equal(reused.status, 400);
-
-    process.env.NODE_ENV = 'production';
-    try {
-      const hidden = await api('/api/tickets/access', { method: 'POST', body: { email: 'other.guest@campus.example' } });
-      assert.equal(hidden.status, 503);
-      assert.equal(hidden.json.code, undefined);
-      assert.equal(hidden.json.error.code, 'DELIVERY_UNAVAILABLE');
-    } finally {
-      process.env.NODE_ENV = 'test';
-    }
+    assert.equal(opened.json.ticket.ticketCode, ticketCode);
+    assert.equal(opened.json.ticket.event.title, 'Test Gathering');
+    assert.equal(opened.json.ticket.qrDataUrl.startsWith('data:image'), true);
+    assert.equal(opened.json.ticket.email.includes(email), false);
+    assert.equal(JSON.stringify(opened.json).includes('development'), false);
   });
 
   test('rejects an unsigned payment webhook and saves a newsletter address once', async () => {

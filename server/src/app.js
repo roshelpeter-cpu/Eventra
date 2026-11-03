@@ -33,16 +33,16 @@ import {
   updateRegistrationStatus,
   withQr,
 } from './services.js';
-import { requestTicketCode, subscribeEmail, verifyTicketCode } from './access.js';
+import { findTicket, subscribeEmail } from './access.js';
 import {
   cancelPayment,
   getPaymentView,
   handleRazorpayWebhook,
-  resendDemoOtp,
+  resendPaymentOtp,
   simulatePayment,
   startCheckout,
-  submitDemoCard,
-  verifyDemoOtp,
+  submitCardDetails,
+  verifyPaymentOtp,
   verifyRazorpayPayment,
 } from './payments.js';
 import { parsePositiveInt } from './validate.js';
@@ -201,23 +201,11 @@ export function createApp(db, { clientDist } = {}) {
     res.send(svg);
   }));
 
-  app.post('/api/tickets/access', (req, res, next) => {
-    try {
-      rateLimit(`ticket-code:${clientIp(req)}`, 12, 15 * 60 * 1000);
-      res.json(requestTicketCode(db, req.body?.email));
-    } catch (error) {
-      next(error);
-    }
-  });
-
-  app.post('/api/tickets/access/verify', (req, res, next) => {
-    try {
-      rateLimit(`ticket-verify:${clientIp(req)}`, 20, 15 * 60 * 1000);
-      res.json(verifyTicketCode(db, req.body?.email, req.body?.code));
-    } catch (error) {
-      next(error);
-    }
-  });
+  app.post('/api/tickets/lookup', asyncRoute(async (req, res) => {
+    rateLimit(`ticket-lookup:${clientIp(req)}`, 20, 15 * 60 * 1000);
+    const ticket = await withQr(findTicket(db, req.body?.email, req.body?.ticketCode));
+    res.json({ ticket });
+  }));
 
   app.get('/api/payments/:publicId', (req, res, next) => {
     try {
@@ -229,17 +217,17 @@ export function createApp(db, { clientDist } = {}) {
 
   app.post('/api/payments/:publicId/card', asyncRoute(async (req, res) => {
     rateLimit(`pay-card:${clientIp(req)}`, 20, 15 * 60 * 1000);
-    res.json(submitDemoCard(db, req.params.publicId, req.body || {}));
+    res.json(await submitCardDetails(db, req.params.publicId, req.body || {}));
   }));
 
   app.post('/api/payments/:publicId/otp', asyncRoute(async (req, res) => {
     rateLimit(`pay-otp:${clientIp(req)}`, 10, 15 * 60 * 1000);
-    res.json(resendDemoOtp(db, req.params.publicId));
+    res.json(await resendPaymentOtp(db, req.params.publicId));
   }));
 
   app.post('/api/payments/:publicId/otp/verify', asyncRoute(async (req, res) => {
     rateLimit(`pay-otp-verify:${clientIp(req)}`, 20, 15 * 60 * 1000);
-    const result = verifyDemoOtp(db, req.params.publicId, req.body?.code);
+    const result = verifyPaymentOtp(db, req.params.publicId, req.body?.code);
     if (result.registration) result.registration = await withQr(result.registration);
     res.json(result);
   }));

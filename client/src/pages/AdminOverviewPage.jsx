@@ -38,7 +38,7 @@ export function AdminOverviewPage() {
         <div>
           <p className="kicker">Overview</p>
           <h1>Dashboard</h1>
-          <p className="muted">Live counts from the Eventra database.</p>
+          <p className="muted">A snapshot of upcoming events and registrations.</p>
         </div>
         <div className="actions">
           <Link className="btn btn-ghost" to="/admin/attendees">View Attendees</Link>

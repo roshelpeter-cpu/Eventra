@@ -1,12 +1,14 @@
 import crypto from 'node:crypto';
 import { withTransaction } from './db.js';
 import { HttpError } from './errors.js';
+import { sendVerificationEmail } from './mail.js';
 import { heldSeats, quoteForEvent } from './pricing.js';
 import {
   getEventRecord,
   getRegistrationById,
   issueRegistration,
   mapWriteError,
+  maskEmail,
   registerForEvent,
 } from './services.js';
 import { validateRegistrationInput } from './validate.js';
@@ -57,11 +59,17 @@ const PAYMENT_SELECT = `
   LEFT JOIN registrations r ON r.id = p.registration_id
 `;
 
+function publicNote(note) {
+  const text = note || '';
+  if (text.startsWith('internal:')) return '';
+  return text;
+}
+
 function mapPayment(row) {
   return {
     publicId: row.public_id,
     status: row.status,
-    provider: row.provider,
+    provider: row.provider === 'razorpay' ? 'razorpay' : 'simulation',
     amountCents: Number(row.amount_cents),
     currency: row.currency,
     quantity: Number(row.quantity),
@@ -70,7 +78,7 @@ function mapPayment(row) {
     email: row.email,
     organization: row.organization,
     expiresAt: row.expires_at,
-    note: row.note || '',
+    note: publicNote(row.note),
     providerOrderId: row.provider_order_id || null,
     cardBrand: row.card_brand || null,
     cardLast4: row.card_last4 || null,
@@ -94,6 +102,7 @@ export function getPaymentView(db, publicId) {
   return {
     payment,
     checkout: row && row.status === 'pending' ? checkoutConfig(row) : null,
+    verification: verificationMeta(db, row),
   };
 }
 
@@ -131,7 +140,7 @@ function checkoutConfig(row) {
     };
   }
   return {
-    provider: 'development',
+    provider: 'simulation',
     simulation: true,
     amount: Number(row.amount_cents),
     currency: row.currency,
@@ -147,14 +156,8 @@ export async function startCheckout(db, idOrSlug, body) {
     const registration = registerForEvent(db, idOrSlug, body);
     return { registration, payment: null, checkout: null };
   }
-  if (!razorpayConfigured() && !developmentPaymentsAllowed()) {
-    throw new HttpError(
-      503,
-      'PAYMENT_NOT_CONFIGURED',
-      'Payment is not configured. Add Razorpay test keys before a paid registration can be confirmed.',
-    );
-  }
-
+  // Simulated checkout is stored as "development" because that is the
+  // non-gateway value allowed by the payments table. No bank is contacted.
   const provider = razorpayConfigured() ? 'razorpay' : 'development';
   let paymentId = null;
   try {
@@ -349,11 +352,18 @@ function completePayment(db, paymentDbId, providerPaymentId) {
         currency: row.currency,
         now,
       });
+      const simulated = row.provider === 'simulation' || row.provider === 'development';
       db.prepare(
         `UPDATE payments
-         SET status = 'paid', registration_id = ?, provider_payment_id = COALESCE(?, provider_payment_id), updated_at = ?
+         SET status = 'paid', registration_id = ?, provider_payment_id = ?, note = ?, updated_at = ?
          WHERE id = ?`,
-      ).run(registrationId, providerPaymentId || null, now, row.id);
+      ).run(
+        registrationId,
+        simulated ? null : (providerPaymentId || row.provider_payment_id || null),
+        simulated ? 'internal:simulated-checkout' : (row.note || ''),
+        now,
+        row.id,
+      );
     });
   } catch (error) {
     const mapped = mapWriteError(error);
@@ -442,8 +452,8 @@ export function simulatePayment(db, publicId, outcome) {
   }
   const row = loadPayment(db, publicId);
   if (!row) throw new HttpError(404, 'NOT_FOUND', 'That payment could not be found.');
-  if (row.provider !== 'development') {
-    throw new HttpError(409, 'PAYMENT_CLOSED', 'This checkout uses the payment provider, not the development simulator.');
+  if (row.provider === 'razorpay') {
+    throw new HttpError(409, 'PAYMENT_CLOSED', 'This checkout uses the payment provider.');
   }
   if (row.status === 'paid' && outcome === 'paid') {
     return { registration: getRegistrationById(db, row.registration_id), payment: mapPayment(row) };
@@ -463,49 +473,24 @@ export function simulatePayment(db, publicId, outcome) {
   return { registration: null, payment: getPayment(db, publicId) };
 }
 
-const DEMO_PURPOSE = 'payment_demo';
-const OTP_TTL_MS = 10 * 60 * 1000;
+const PAYMENT_PURPOSE = 'payment_email';
+const OTP_TTL_MS = 5 * 60 * 1000;
 const OTP_RESEND_MS = 60 * 1000;
 const OTP_MAX_ATTEMPTS = 5;
 const OTP_HOURLY_LIMIT = 5;
-const DECLINE_CARD = '4000000000000002';
+const CARD_BRANDS = new Set(['Visa', 'Mastercard', 'American Express', 'Card']);
 
 function hashCode(code) {
   const pepper = process.env.OTP_PEPPER || 'eventra-development-pepper';
   return crypto.createHmac('sha256', pepper).update(String(code)).digest('hex');
 }
 
-function luhnValid(number) {
-  let sum = 0;
-  let alternate = false;
-  for (let index = number.length - 1; index >= 0; index -= 1) {
-    let digit = Number(number[index]);
-    if (alternate) {
-      digit *= 2;
-      if (digit > 9) digit -= 9;
-    }
-    sum += digit;
-    alternate = !alternate;
-  }
-  return sum % 10 === 0;
-}
-
-function cardBrand(number) {
-  if (number.startsWith('4')) return 'Visa';
-  if (/^5[1-5]/.test(number) || /^2[2-7]/.test(number)) return 'Mastercard';
-  if (/^3[47]/.test(number)) return 'American Express';
-  return 'Card';
-}
-
-function assertDevelopmentPayment(db, publicId) {
-  if (!developmentPaymentsAllowed()) {
-    throw new HttpError(403, 'FORBIDDEN', 'Demo payment mode is disabled in production.');
-  }
+function assertSimulatedPayment(db, publicId) {
   expireStale(db);
   const row = loadPayment(db, publicId);
   if (!row) throw new HttpError(404, 'NOT_FOUND', 'That payment could not be found.');
-  if (row.provider !== 'development') {
-    throw new HttpError(409, 'PAYMENT_CLOSED', 'This checkout uses the payment provider, not demo payment mode.');
+  if (row.provider === 'razorpay') {
+    throw new HttpError(409, 'PAYMENT_CLOSED', 'This checkout uses the payment provider.');
   }
   if (row.status !== 'pending') {
     throw new HttpError(409, 'PAYMENT_CLOSED', 'This payment is no longer pending.');
@@ -516,17 +501,30 @@ function assertDevelopmentPayment(db, publicId) {
   return row;
 }
 
-function latestDemoCode(db, publicId) {
+function latestCode(db, publicId) {
   return db.prepare(
     `SELECT * FROM verification_codes
      WHERE purpose = ? AND subject = ?
      ORDER BY id DESC LIMIT 1`,
-  ).get(DEMO_PURPOSE, publicId);
+  ).get(PAYMENT_PURPOSE, publicId);
 }
 
-function issueDemoCode(db, publicId) {
+function verificationMeta(db, row) {
+  if (!row || row.status !== 'pending' || row.provider === 'razorpay') return null;
+  const latest = latestCode(db, row.public_id);
+  if (!latest || latest.consumed_at || Number(latest.attempts) >= OTP_MAX_ATTEMPTS) return null;
+  if (new Date(latest.expires_at).getTime() <= Date.now()) return null;
+  return {
+    sent: true,
+    expiresAt: latest.expires_at,
+    resendAvailableAt: new Date(new Date(latest.created_at).getTime() + OTP_RESEND_MS).toISOString(),
+    maskedEmail: maskEmail(row.email),
+  };
+}
+
+async function deliverPaymentCode(db, row) {
   const now = Date.now();
-  const recent = latestDemoCode(db, publicId);
+  const recent = latestCode(db, row.public_id);
   if (recent && !recent.consumed_at && now - new Date(recent.created_at).getTime() < OTP_RESEND_MS) {
     throw new HttpError(429, 'RATE_LIMITED', 'Wait a minute before requesting another code.');
   }
@@ -535,98 +533,108 @@ function issueDemoCode(db, publicId) {
     db.prepare(
       `SELECT COUNT(*) AS n FROM verification_codes
        WHERE purpose = ? AND subject = ? AND created_at >= ?`,
-    ).get(DEMO_PURPOSE, publicId, hourAgo).n,
+    ).get(PAYMENT_PURPOSE, row.public_id, hourAgo).n,
   );
   if (burst >= OTP_HOURLY_LIMIT) {
     throw new HttpError(429, 'RATE_LIMITED', 'Too many codes were requested. Try again later.');
   }
   const code = String(crypto.randomInt(0, 1000000)).padStart(6, '0');
+  await sendVerificationEmail({
+    to: row.email,
+    guestName: row.full_name,
+    eventName: row.title,
+    code,
+  });
   const created = new Date(now).toISOString();
   const expires = new Date(now + OTP_TTL_MS).toISOString();
-  db.prepare(
-    `INSERT INTO verification_codes (purpose, subject, code_hash, expires_at, attempts, created_at)
-     VALUES (?, ?, ?, ?, 0, ?)`,
-  ).run(DEMO_PURPOSE, publicId, hashCode(code), expires, created);
+  withTransaction(db, () => {
+    db.prepare(
+      `UPDATE verification_codes
+       SET consumed_at = ?
+       WHERE purpose = ? AND subject = ? AND consumed_at IS NULL`,
+    ).run(created, PAYMENT_PURPOSE, row.public_id);
+    db.prepare(
+      `INSERT INTO verification_codes (purpose, subject, code_hash, expires_at, attempts, created_at)
+       VALUES (?, ?, ?, ?, 0, ?)`,
+    ).run(PAYMENT_PURPOSE, row.public_id, hashCode(code), expires, created);
+  });
   return {
-    delivery: 'development',
+    sent: true,
     expiresAt: expires,
-    code,
-    message: 'Development only. No bank or card network sent this code.',
+    resendAvailableAt: new Date(now + OTP_RESEND_MS).toISOString(),
+    maskedEmail: maskEmail(row.email),
   };
 }
 
-function readCard(body) {
-  const digits = String(body?.cardNumber ?? '').replace(/\D/g, '');
-  const cvv = String(body?.cvv ?? '').replace(/\D/g, '');
+function readCardSummary(body) {
+  const last4 = String(body?.cardLast4 ?? '').replace(/\D/g, '');
+  const brand = String(body?.cardBrand ?? '').trim();
   const name = String(body?.cardholderName ?? '').trim().replace(/\s+/g, ' ');
-  const expiry = String(body?.expiry ?? '').trim();
   const fields = {};
-  if (digits.length < 13 || digits.length > 19 || !luhnValid(digits)) {
-    fields.cardNumber = 'Enter a valid test card number.';
+  if (!/^\d{4}$/.test(last4) || !CARD_BRANDS.has(brand)) {
+    fields.cardNumber = 'Enter a valid card number.';
   }
-  const expiryMatch = expiry.match(/^(\d{2})\s*\/\s*(\d{2}|\d{4})$/);
-  if (!expiryMatch) {
-    fields.expiry = 'Use the month and year as MM/YY.';
-  } else {
-    const month = Number(expiryMatch[1]);
-    const year = Number(expiryMatch[2].length === 2 ? `20${expiryMatch[2]}` : expiryMatch[2]);
-    const end = new Date(year, month, 1).getTime();
-    if (month < 1 || month > 12 || end <= Date.now()) fields.expiry = 'Enter a future expiry date.';
-  }
-  if (cvv.length < 3 || cvv.length > 4) fields.cvv = 'Enter the 3 or 4 digit security code.';
   if (name.length < 2 || name.length > 80) fields.cardholderName = 'Enter the name on the card.';
   if (Object.keys(fields).length) {
     throw new HttpError(400, 'VALIDATION', 'Check the card details.', fields);
   }
-  return { digits, brand: cardBrand(digits), last4: digits.slice(-4) };
+  return { brand, last4 };
 }
 
-export function submitDemoCard(db, publicId, body) {
-  const row = assertDevelopmentPayment(db, publicId);
-  const card = readCard(body);
-  if (card.digits === DECLINE_CARD) {
-    db.prepare(
-      `UPDATE payments SET status = 'failed', note = ?, updated_at = ? WHERE id = ? AND status = 'pending'`,
-    ).run('Demo card was declined. No payment was taken.', new Date().toISOString(), row.id);
-    return {
-      declined: true,
-      message: 'This demo card was declined. No payment was taken.',
-      payment: getPayment(db, publicId),
-    };
-  }
+export async function submitCardDetails(db, publicId, body) {
+  const row = assertSimulatedPayment(db, publicId);
+  const card = readCardSummary(body);
   db.prepare(
     `UPDATE payments SET card_brand = ?, card_last4 = ?, updated_at = ? WHERE id = ?`,
   ).run(card.brand, card.last4, new Date().toISOString(), row.id);
-  const verification = issueDemoCode(db, publicId);
+  const verification = await deliverPaymentCode(db, row);
   return { payment: getPayment(db, publicId), verification };
 }
 
-export function resendDemoOtp(db, publicId) {
-  assertDevelopmentPayment(db, publicId);
-  const existing = latestDemoCode(db, publicId);
+export async function resendPaymentOtp(db, publicId) {
+  const row = assertSimulatedPayment(db, publicId);
+  const existing = latestCode(db, publicId);
   if (!existing) {
-    throw new HttpError(409, 'PAYMENT_CLOSED', 'Enter card details before requesting a code.');
+    throw new HttpError(409, 'PAYMENT_CLOSED', 'Enter your payment details before requesting a code.');
   }
-  const verification = issueDemoCode(db, publicId);
+  const verification = await deliverPaymentCode(db, row);
   return { payment: getPayment(db, publicId), verification };
 }
 
-export function verifyDemoOtp(db, publicId, codeRaw) {
-  const row = assertDevelopmentPayment(db, publicId);
+export function verifyPaymentOtp(db, publicId, codeRaw) {
+  expireStale(db);
+  const row = loadPayment(db, publicId);
+  if (!row) throw new HttpError(404, 'NOT_FOUND', 'That payment could not be found.');
+  if (row.status === 'paid' && row.registration_id) {
+    return { registration: getRegistrationById(db, row.registration_id), payment: getPayment(db, publicId) };
+  }
+  if (row.provider === 'razorpay') {
+    throw new HttpError(409, 'PAYMENT_CLOSED', 'This checkout uses the payment provider.');
+  }
+  if (row.status !== 'pending') {
+    throw new HttpError(409, 'PAYMENT_CLOSED', 'This payment is no longer pending.');
+  }
+  if (new Date(row.expires_at).getTime() < Date.now()) {
+    throw new HttpError(409, 'PAYMENT_EXPIRED', 'This checkout expired. Start registration again.');
+  }
   const code = String(codeRaw ?? '').replace(/\s+/g, '');
-  const generic = new HttpError(400, 'CODE_INVALID', 'That code is not valid.');
+  const generic = new HttpError(400, 'CODE_INVALID', 'That verification code is incorrect.');
   if (!/^\d{6}$/.test(code)) throw generic;
-  const saved = latestDemoCode(db, publicId);
-  if (!saved || saved.consumed_at || new Date(saved.expires_at).getTime() < Date.now() || saved.attempts >= OTP_MAX_ATTEMPTS) {
-    throw generic;
+  const saved = latestCode(db, publicId);
+  if (!saved || saved.consumed_at) throw generic;
+  if (new Date(saved.expires_at).getTime() < Date.now()) {
+    throw new HttpError(400, 'CODE_EXPIRED', 'This verification code has expired. Request a new one.');
+  }
+  if (saved.attempts >= OTP_MAX_ATTEMPTS) {
+    throw new HttpError(400, 'CODE_INVALID', 'Too many incorrect attempts. Request a new code.');
   }
   if (!safeEqual(saved.code_hash, hashCode(code))) {
     const attempts = Number(saved.attempts) + 1;
     db.prepare(`UPDATE verification_codes SET attempts = ? WHERE id = ?`).run(attempts, saved.id);
     if (attempts >= OTP_MAX_ATTEMPTS) {
-      throw new HttpError(400, 'CODE_INVALID', 'Too many incorrect codes. Request a new one.');
+      throw new HttpError(400, 'CODE_INVALID', 'Too many incorrect attempts. Request a new code.');
     }
-    throw new HttpError(400, 'CODE_INVALID', 'That code is not valid.', {
+    throw new HttpError(400, 'CODE_INVALID', 'That verification code is incorrect.', {
       attemptsRemaining: String(OTP_MAX_ATTEMPTS - attempts),
     });
   }

@@ -10,7 +10,7 @@ function messageFor(status) {
   if (status === 'waitlisted') return 'You are on the waitlist. If a confirmed guest cancels, the earliest waitlisted guest is moved into the seat.';
   if (status === 'cancelled') return 'This registration has been cancelled.';
   if (status === 'checked_in') return 'This ticket has been checked in.';
-  return 'You are registered. A confirmation is saved with your ticket.';
+  return 'Your registration is confirmed.';
 }
 
 function calendarStamp(iso) {

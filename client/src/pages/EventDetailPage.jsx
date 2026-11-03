@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { api } from '../api.js';
-import { DateBadge, EventCard, Photo, SaveButton } from '../components/EventCard.jsx';
+import { DateBadge, EventCard, Photo } from '../components/EventCard.jsx';
 import { ShareBar } from '../components/ShareBar.jsx';
 import { VenueMap } from '../components/VenueMap.jsx';
 import { ErrorBlock, Meter, PageTitle } from '../components/ui.jsx';
@@ -81,7 +81,7 @@ export function EventDetailPage() {
             <Meter value={event.capacity ? (event.confirmedCount / event.capacity) * 100 : 0} />
             <p className="capacity-line"><strong>{event.seatsRemaining} seats left</strong><span>of {event.capacity}</span></p>
             {event.waitlistCount ? <p className="meta">{event.waitlistCount} people are on the waitlist.</p> : null}
-            <p className="price-note">{event.startingPriceCents > 0 ? 'A paid seat is confirmed only after this demo checkout is verified.' : 'No payment is collected for this event.'}</p>
+            <p className="price-note">{event.startingPriceCents > 0 ? 'Your seat is confirmed after email verification.' : 'This event is free to attend.'}</p>
             {closed ? <p>Registration is closed for this event.</p> : (
               <Link className="btn btn-primary" to={`/events/${event.slug}/register`}>{action}</Link>
             )}
@@ -99,7 +99,6 @@ export function EventDetailPage() {
                   <span className="badge">{kind}</span>
                   <span className="badge">{price}</span>
                 </div>
-                <SaveButton slug={event.slug} title={event.title} />
               </div>
               <h1>{event.title}</h1>
               <div className="fact-row">

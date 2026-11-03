@@ -66,7 +66,7 @@ export function HomePage() {
     setJoining(true);
     try {
       await api('/api/subscribe', { method: 'POST', body: { email } });
-      setNotice('You are on the announcement list. This demo stores the address and does not send email.');
+      setNotice('You are subscribed.');
       setEmail('');
     } catch (subscribeError) {
       setNotice(subscribeError.message);
@@ -132,7 +132,7 @@ export function HomePage() {
           ) : null}
         </section>
 
-        <section className="stat-row reveal" aria-label="Platform numbers from the database">
+        <section className="stat-row reveal" aria-label="Highlights">
           <article className="stat">
             <span className="stat-icon"><StatIcon name="events" /></span>
             <div><span>Upcoming events</span><strong>{highlights ? highlights.upcoming : '—'}</strong></div>
@@ -160,7 +160,7 @@ export function HomePage() {
         </div>
         {loading ? <SkeletonCards count={3} /> : null}
         {!loading && !error && featured.length === 0 ? (
-          <EmptyState title="No events are published yet." body="When the administrator publishes an event, it appears here from the database." />
+          <EmptyState title="No events are published yet." body="New events will appear here when they are published." />
         ) : null}
         {!loading && !error && featured.length > 0 ? <FeaturedCarousel events={featured} /> : null}
 
@@ -214,14 +214,14 @@ export function HomePage() {
         <section className="newsletter reveal">
           <div>
             <p className="kicker">Announcements</p>
-            <h2>Hear about newly published events</h2>
-            <p className="muted">The address is saved in the database. Eventra does not send mail unless an email provider is configured later.</p>
+            <h2>Stay in the Loop</h2>
+            <p className="muted">Be the first to discover exciting events, exclusive experiences, and upcoming opportunities.</p>
           </div>
           <form onSubmit={subscribe}>
             <label htmlFor="announce-email">Email address</label>
             <div className="hero-search">
-              <input id="announce-email" type="email" required value={email} placeholder="you@college.edu" onChange={(event) => setEmail(event.target.value)} />
-              <button className="btn btn-primary" type="submit" disabled={joining}>{joining ? 'Saving…' : 'Join'}</button>
+              <input id="announce-email" type="email" required value={email} placeholder="Enter your email address" onChange={(event) => setEmail(event.target.value)} />
+              <button className="btn btn-primary" type="submit" disabled={joining}>{joining ? 'Subscribing…' : 'Subscribe'}</button>
             </div>
             {notice ? <p className="meta" role="status">{notice}</p> : null}
           </form>

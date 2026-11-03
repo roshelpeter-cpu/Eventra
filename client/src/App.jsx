@@ -15,7 +15,7 @@ import { HomePage } from './pages/HomePage.jsx';
 import { AboutPage } from './pages/InfoPages.jsx';
 import { PaymentPage } from './pages/PaymentPage.jsx';
 import { RegisterPage } from './pages/RegisterPage.jsx';
-import { SavedPage, TicketsHome } from './pages/AccountPages.jsx';
+import { TicketsHome } from './pages/AccountPages.jsx';
 import { ConfirmationPage, TicketPage } from './pages/TicketPages.jsx';
 
 export default function App() {
@@ -27,7 +27,6 @@ export default function App() {
         <Route path="events/:id" element={<EventDetailPage />} />
         <Route path="events/:id/register" element={<RegisterPage />} />
         <Route path="pay/:publicId" element={<PaymentPage />} />
-        <Route path="saved" element={<SavedPage />} />
         <Route path="tickets" element={<TicketsHome />} />
         <Route path="about" element={<AboutPage />} />
         <Route path="contact" element={<ContactPage />} />

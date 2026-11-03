@@ -102,9 +102,8 @@ export function getEventRecord(db, idOrSlug) {
 
 export function maskEmail(email) {
   const [user, domain] = String(email).split('@');
-  if (!domain) return '***';
-  const visible = user.slice(0, 1);
-  return `${visible}${'*'.repeat(Math.max(2, Math.min(6, user.length - 1)))}@${domain}`;
+  if (!domain || !user) return '***';
+  return `${user.slice(0, 1)}${'*'.repeat(Math.max(5, user.length - 1))}@${domain}`;
 }
 
 function mapRegistration(row, { mask = false } = {}) {
@@ -936,12 +935,6 @@ export function getTicketStatus(db, code) {
       city: ticket.event.city,
     },
   };
-}
-
-export function listTicketsForEmail(db, email) {
-  return db.prepare(
-    `${REGISTRATION_SELECT} WHERE r.email = ? ORDER BY r.created_at DESC, r.id DESC`,
-  ).all(email).map((row) => mapRegistration(row, { mask: true }));
 }
 
 export async function ticketSvg(ticket) {

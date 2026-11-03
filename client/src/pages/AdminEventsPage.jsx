@@ -134,7 +134,7 @@ export function AdminEventsPage() {
         open={Boolean(pending)}
         title={pending?.status === 'archived' ? `Archive ${pending?.event.title}?` : `Cancel ${pending?.event.title}?`}
         description={pending?.status === 'archived'
-          ? 'Archived events leave the public calendar. Registrations stay in the database.'
+          ? 'Archived events leave the public calendar. Existing registrations are kept.'
           : 'Cancelled events stay visible as called off. New registration closes. Existing guests remain on the list.'}
         confirmLabel={pending?.status === 'archived' ? 'Archive event' : 'Cancel event'}
         danger

@@ -35,7 +35,7 @@ export function ContactPage() {
       <div className="wrap narrow form-card">
         <p className="kicker">Contact</p>
         <h1>Contact Eventra</h1>
-        <p className="muted">Messages are saved in the local database. The administrator can read them in Settings.</p>
+        <p className="muted">We'd love to hear from you. Have a question or need assistance? Get in touch with our team.</p>
         <form className="form-grid" onSubmit={submit}>
           <Field id="contact-name" label="Name" error={errors.name}>
             <input id="contact-name" value={values.name} onChange={(event) => setValues({ ...values, name: event.target.value })} />
@@ -52,7 +52,7 @@ export function ContactPage() {
             <textarea id="contact-message" rows="5" value={values.message} onChange={(event) => setValues({ ...values, message: event.target.value })} />
           </Field>
           {formError ? <p className="field-error" role="alert">{formError}</p> : null}
-          {done ? <p role="status">Message saved. Thank you.</p> : null}
+          {done ? <p role="status">Thank you. We've received your message.</p> : null}
           <button className="btn btn-primary" type="submit" disabled={busy}>{busy ? 'Sending…' : 'Send message'}</button>
         </form>
       </div>

@@ -28,13 +28,63 @@ function groupExpiry(value) {
   return `${digits.slice(0, 2)}/${digits.slice(2)}`;
 }
 
+function luhnValid(number) {
+  let sum = 0;
+  let alternate = false;
+  for (let index = number.length - 1; index >= 0; index -= 1) {
+    let digit = Number(number[index]);
+    if (alternate) {
+      digit *= 2;
+      if (digit > 9) digit -= 9;
+    }
+    sum += digit;
+    alternate = !alternate;
+  }
+  return sum % 10 === 0;
+}
+
+function cardBrand(number) {
+  if (number.startsWith('4')) return 'Visa';
+  if (/^5[1-5]/.test(number) || /^2[2-7]/.test(number)) return 'Mastercard';
+  if (/^3[47]/.test(number)) return 'American Express';
+  return 'Card';
+}
+
+function validateCard(card) {
+  const digits = card.number.replace(/\D/g, '');
+  const cvv = card.cvv.replace(/\D/g, '');
+  const name = card.name.trim().replace(/\s+/g, ' ');
+  const fields = {};
+  if (digits.length < 13 || digits.length > 19 || !luhnValid(digits)) {
+    fields.cardNumber = 'Enter a valid card number.';
+  }
+  const expiryMatch = card.expiry.match(/^(\d{2})\/(\d{2})$/);
+  if (!expiryMatch) {
+    fields.expiry = 'Use the month and year as MM/YY.';
+  } else {
+    const month = Number(expiryMatch[1]);
+    const year = Number(`20${expiryMatch[2]}`);
+    const end = new Date(year, month, 1).getTime();
+    if (month < 1 || month > 12 || end <= Date.now()) fields.expiry = 'Enter a future expiry date.';
+  }
+  if (cvv.length < 3 || cvv.length > 4) fields.cvv = 'Enter the security code.';
+  if (name.length < 2 || name.length > 80) fields.cardholderName = 'Enter the name on the card.';
+  return { fields, digits, brand: cardBrand(digits), name };
+}
+
+function clock(totalSeconds) {
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return `${minutes}:${String(seconds).padStart(2, '0')}`;
+}
+
 function loadRazorpay() {
   if (window.Razorpay) return Promise.resolve();
   return new Promise((resolve, reject) => {
     const script = document.createElement('script');
     script.src = 'https://checkout.razorpay.com/v1/checkout.js';
     script.onload = () => resolve();
-    script.onerror = () => reject(new Error('The payment provider could not be loaded.'));
+    script.onerror = () => reject(new Error('The payment window could not be loaded.'));
     document.body.appendChild(script);
   });
 }
@@ -54,7 +104,8 @@ export function PaymentPage() {
   const [otp, setOtp] = useState('');
   const [registration, setRegistration] = useState(null);
   const [resendAt, setResendAt] = useState(0);
-  const [now, setNow] = useState(Date.now());
+  const [now, setNow] = useState(0);
+  const [sendingCode, setSendingCode] = useState(false);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -64,6 +115,12 @@ export function PaymentPage() {
         setCheckout(data.checkout);
         if (data.payment.status === 'paid') setStep(3);
         else if (data.payment.status === 'failed' || data.payment.status === 'expired' || data.payment.status === 'cancelled') setPhase('failed');
+        else if (data.verification?.sent) {
+          setVerification(data.verification);
+          setResendAt(new Date(data.verification.resendAvailableAt).getTime());
+          setNow(Date.now());
+          setStep(2);
+        }
         if (data.payment.event?.slug) {
           const eventData = await api(`/api/events/${data.payment.event.slug}`, { signal: controller.signal });
           const type = (eventData.event.ticketTypes || []).find((item) => item.name === data.payment.ticketLabel);
@@ -84,27 +141,41 @@ export function PaymentPage() {
   }, [publicId]);
 
   useEffect(() => {
-    if (!resendAt) return undefined;
-    const timer = window.setInterval(() => setNow(Date.now()), 500);
-    return () => window.clearInterval(timer);
-  }, [resendAt]);
+    const tick = () => setNow(Date.now());
+    const immediate = window.setTimeout(tick, 0);
+    if (!resendAt && !verification?.expiresAt) return () => window.clearTimeout(immediate);
+    const timer = window.setInterval(tick, 500);
+    return () => {
+      window.clearTimeout(immediate);
+      window.clearInterval(timer);
+    };
+  }, [resendAt, verification?.expiresAt]);
 
   const subtotal = quote ? quote.unit * quote.quantity : payment?.amountCents || 0;
   const fees = quote ? quote.fee * quote.quantity : 0;
   const total = payment?.amountCents || subtotal + fees;
-  const resendWait = Math.max(0, Math.ceil((resendAt - now) / 1000));
-  const demo = (checkout?.provider || payment?.provider) === 'development';
+  const resendWait = now ? Math.max(0, Math.ceil((resendAt - now) / 1000)) : 0;
+  const expireWait = now && verification?.expiresAt
+    ? Math.max(0, Math.ceil((new Date(verification.expiresAt).getTime() - now) / 1000))
+    : null;
   const provider = checkout?.provider || payment?.provider;
+  const codeExpired = step === 2 && verification?.expiresAt && expireWait === 0;
+  const verifyMessage = formError || (codeExpired ? 'This verification code has expired. Request a new one.' : '');
 
   function rememberCode(next) {
     setVerification(next);
-    setResendAt(Date.now() + 60 * 1000);
+    setResendAt(next?.resendAvailableAt ? new Date(next.resendAvailableAt).getTime() : Date.now() + 60 * 1000);
     setNow(Date.now());
   }
 
   async function submitCard(formEvent) {
     formEvent.preventDefault();
     setFormError('');
+    const summary = validateCard(card);
+    if (Object.keys(summary.fields).length) {
+      setFieldErrors(summary.fields);
+      return;
+    }
     setFieldErrors({});
     setPhase('processing');
     try {
@@ -112,22 +183,22 @@ export function PaymentPage() {
         api(`/api/payments/${publicId}/card`, {
           method: 'POST',
           body: {
-            cardNumber: card.number,
-            cardholderName: card.name,
-            expiry: card.expiry,
-            cvv: card.cvv,
+            cardLast4: summary.digits.slice(-4),
+            cardBrand: summary.brand,
+            cardholderName: summary.name,
           },
         }),
         motionDelay(900),
       ]);
-      setCard({ number: '', name: card.name, expiry: '', cvv: '' });
-      setPayment(data.payment);
-      if (data.declined) {
-        setFormError(data.message);
-        setPhase('failed');
+      if (!data.verification?.sent) {
+        setFormError('We could not send a verification code. Please try again.');
+        setPhase('form');
         return;
       }
+      setCard({ number: '', name: '', expiry: '', cvv: '' });
+      setPayment(data.payment);
       rememberCode(data.verification);
+      setOtp('');
       setStep(2);
       setPhase('form');
     } catch (submitError) {
@@ -139,6 +210,10 @@ export function PaymentPage() {
 
   async function verifyCode(formEvent) {
     formEvent.preventDefault();
+    if (codeExpired) {
+      setFormError('This verification code has expired. Request a new one.');
+      return;
+    }
     setFormError('');
     setPhase('processing');
     try {
@@ -158,12 +233,19 @@ export function PaymentPage() {
 
   async function resend() {
     setFormError('');
+    setSendingCode(true);
     try {
       const data = await api(`/api/payments/${publicId}/otp`, { method: 'POST', body: {} });
+      if (!data.verification?.sent) {
+        setFormError('We could not send a verification code. Please try again.');
+        return;
+      }
       rememberCode(data.verification);
       setOtp('');
     } catch (resendError) {
       setFormError(resendError.message);
+    } finally {
+      setSendingCode(false);
     }
   }
 
@@ -228,23 +310,19 @@ export function PaymentPage() {
             ))}
           </ol>
 
-          {demo ? (
-            <p className="demo-banner">DEMO PAYMENT MODE. No bank is involved and no real charge is made.</p>
-          ) : null}
-
           {phase === 'processing' ? (
             <div className="pay-status" role="status">
               <span className="pay-spinner" aria-hidden="true" />
-              <h1>{step >= 2 ? 'Verifying' : 'Processing'}</h1>
-              <p className="muted">{step >= 2 ? 'Checking the development code.' : 'Sending the demo payment request.'}</p>
+              <h1>{step >= 2 ? 'Verifying' : 'Sending code'}</h1>
+              <p className="muted">{step >= 2 ? 'Checking your verification code.' : 'Sending your verification code.'}</p>
             </div>
           ) : null}
 
           {phase === 'failed' ? (
             <div className="pay-status">
               <div className="check check-bad" aria-hidden="true">!</div>
-              <h1>Payment was not completed</h1>
-              <p className="muted">{formError || payment.note || 'This demo payment was not confirmed.'}</p>
+              <h1>Registration was not completed</h1>
+              <p className="muted">{formError || payment.note || 'Please start again to reserve your seat.'}</p>
               <div className="actions">
                 <Link className="btn btn-primary" to={`/events/${payment.event.slug}/register`}>Try again</Link>
                 <Link className="btn btn-ghost" to={`/events/${payment.event.slug}`}>Back to event</Link>
@@ -273,12 +351,12 @@ export function PaymentPage() {
           {phase === 'form' && step === 1 && provider === 'razorpay' ? (
             <div className="stack pay-step">
               <h1>Payment details</h1>
-              <p className="muted">This event uses the configured Razorpay sandbox. Complete payment in the provider window.</p>
-              <p className="secure-note">Secure checkout through Razorpay. Eventra does not store your card.</p>
+              <p className="muted">Complete checkout in the secure payment window.</p>
+              <p className="secure-note">Eventra does not store your card number.</p>
               {formError ? <p className="field-error" role="alert">{formError}</p> : null}
               <div className="actions">
                 <button className="btn btn-ghost" type="button" onClick={() => setStep(0)}>Back</button>
-                <button className="btn btn-primary" type="button" onClick={payWithRazorpay}>Pay {formatMoney(total)}</button>
+                <button className="btn btn-primary" type="button" onClick={payWithRazorpay}>Continue</button>
               </div>
             </div>
           ) : null}
@@ -286,10 +364,10 @@ export function PaymentPage() {
           {phase === 'form' && step === 1 && provider !== 'razorpay' ? (
             <form className="form-grid pay-step" onSubmit={submitCard} noValidate>
               <h1>Payment details</h1>
-              <p className="muted">Use a synthetic test card. The number and security code are checked, then discarded.</p>
-              <p className="secure-note">Demo checkout only. Card numbers and CVVs are not stored.</p>
+              <p className="muted">Enter your card details to continue. A verification code will be emailed to you.</p>
+              <p className="secure-note">Card numbers and security codes are not stored.</p>
               <Field id="card-number" label="Card number" error={fieldErrors.cardNumber}>
-                <input id="card-number" inputMode="numeric" autoComplete="cc-number" placeholder="4242 4242 4242 4242" value={card.number} onChange={(event) => setCard({ ...card, number: groupCard(event.target.value) })} aria-invalid={Boolean(fieldErrors.cardNumber)} />
+                <input id="card-number" inputMode="numeric" autoComplete="cc-number" placeholder="Card number" value={card.number} onChange={(event) => setCard({ ...card, number: groupCard(event.target.value) })} aria-invalid={Boolean(fieldErrors.cardNumber)} />
               </Field>
               <Field id="card-name" label="Cardholder name" error={fieldErrors.cardholderName}>
                 <input id="card-name" autoComplete="cc-name" placeholder="Name on card" value={card.name} onChange={(event) => setCard({ ...card, name: event.target.value })} aria-invalid={Boolean(fieldErrors.cardholderName)} />
@@ -302,35 +380,29 @@ export function PaymentPage() {
                   <input id="card-cvv" inputMode="numeric" autoComplete="cc-csc" placeholder="123" maxLength={4} value={card.cvv} onChange={(event) => setCard({ ...card, cvv: event.target.value.replace(/\D/g, '').slice(0, 4) })} aria-invalid={Boolean(fieldErrors.cvv)} />
                 </Field>
               </div>
-              <p className="meta">Test card 4242 4242 4242 4242 is accepted. 4000 0000 0000 0002 is declined.</p>
               {formError ? <p className="field-error" role="alert">{formError}</p> : null}
               <div className="actions">
                 <button className="btn btn-ghost" type="button" onClick={() => setStep(0)}>Back</button>
-                <button className="btn btn-primary" type="submit">Pay {formatMoney(total)}</button>
+                <button className="btn btn-primary" type="submit">Continue</button>
               </div>
             </form>
           ) : null}
 
           {phase === 'form' && step === 2 ? (
             <form className="form-grid pay-step" onSubmit={verifyCode}>
-              <h1>Verification</h1>
+              <h1>Verify Your Email</h1>
               <div className="verify-orb" aria-hidden="true"><span /></div>
-              <p className="muted">Enter the 6-digit development code for this demo payment. A bank did not send it.</p>
-              {verification?.code ? (
-                <p className="demo-code">
-                  <span>Development only</span>
-                  <strong>{verification.code}</strong>
-                  <span>Shown here so the local demo can be completed. It was not emailed or texted.</span>
-                </p>
-              ) : null}
-              <Field id="otp" label="Development code" error={formError}>
-                <input id="otp" inputMode="numeric" autoComplete="one-time-code" placeholder="000000" maxLength={6} value={otp} onChange={(event) => setOtp(event.target.value.replace(/\D/g, '').slice(0, 6))} />
+              <p className="muted">We've sent a 6-digit verification code to your registered email address.</p>
+              <p className="meta">{verification?.maskedEmail || 'your email'}</p>
+              <p className="meta" role="status">{expireWait == null ? '' : codeExpired ? 'This code has expired.' : `Code expires in ${clock(expireWait)}`}</p>
+              <Field id="otp" label="Verification code" error={verifyMessage}>
+                <input id="otp" inputMode="numeric" autoComplete="one-time-code" placeholder="000000" maxLength={6} value={otp} onChange={(event) => setOtp(event.target.value.replace(/\D/g, '').slice(0, 6))} aria-invalid={Boolean(verifyMessage)} />
               </Field>
               <div className="actions">
-                <button className="btn btn-ghost" type="button" onClick={resend} disabled={resendWait > 0}>
-                  {resendWait > 0 ? `Resend in ${resendWait}s` : 'Resend code'}
+                <button className="btn btn-ghost" type="button" onClick={resend} disabled={resendWait > 0 || sendingCode}>
+                  {sendingCode ? 'Sending…' : resendWait > 0 ? `Resend in ${resendWait}s` : 'Resend code'}
                 </button>
-                <button className="btn btn-primary" type="submit">Verify</button>
+                <button className="btn btn-primary" type="submit" disabled={codeExpired || otp.length !== 6}>Verify</button>
               </div>
             </form>
           ) : null}
@@ -338,8 +410,8 @@ export function PaymentPage() {
           {phase === 'form' && step === 3 ? (
             <div className="pay-status pay-step">
               <div className="check check-draw" aria-hidden="true">✓</div>
-              <h1>Payment confirmed</h1>
-              <p className="muted">This was a demo payment. A seat is now saved for {payment.fullName}.</p>
+              <h1>Registration confirmed</h1>
+              <p className="muted">Your seat is reserved for {payment.fullName}.</p>
               <p className="meta">Reference {registration?.ticketCode || payment.ticketCode}</p>
               <div className="actions">
                 <Link className="btn btn-primary" to={`/tickets/${registration?.ticketCode || payment.ticketCode}`}>View ticket</Link>

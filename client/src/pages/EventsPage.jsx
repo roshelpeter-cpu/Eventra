@@ -76,17 +76,6 @@ export function EventsPage() {
   }, [query, params, setParams]);
 
   useEffect(() => {
-    if (params.get('focus') !== 'search') return undefined;
-    document.getElementById('event-search')?.focus();
-    setParams((prev) => {
-      const next = new URLSearchParams(prev);
-      next.delete('focus');
-      return next;
-    }, { replace: true });
-    return undefined;
-  }, [params, setParams]);
-
-  useEffect(() => {
     const controller = new AbortController();
     api('/api/events?sort=soonest', { signal: controller.signal })
       .then((data) => {
