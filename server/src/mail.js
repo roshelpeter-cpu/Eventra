@@ -30,6 +30,14 @@ function deliveryError() {
   return new HttpError(503, 'DELIVERY_UNAVAILABLE', 'We could not send a verification code. Please try again.');
 }
 
+function deliveryDetail(error) {
+  const status = error?.statusCode || error?.name || 'send_failed';
+  const message = String(error?.message || '')
+    .replace(/re_[A-Za-z0-9_]+/g, '[redacted]')
+    .replace(/\b\d{6}\b/g, '[redacted]');
+  return `${status}${message ? `: ${message}` : ''}`;
+}
+
 function credentialsReady() {
   return Boolean(String(process.env.RESEND_API_KEY || '').trim() && String(process.env.EMAIL_FROM || '').trim());
 }
@@ -134,13 +142,14 @@ export async function sendVerificationEmail({ to, guestName, eventName, code, ki
       html: letter.html,
     });
     if (error || !data?.id) {
-      console.error('Verification email was not accepted by Resend.', error?.statusCode || error?.name || 'send_failed');
+      console.error('Verification email was not accepted by Resend.', deliveryDetail(error));
       throw deliveryError();
     }
-    return { accepted: true };
+    console.info(`Verification email accepted by Resend. ${data.id}`);
+    return { accepted: true, id: data.id };
   } catch (error) {
     if (error instanceof HttpError) throw error;
-    console.error('Verification email was not accepted by Resend.', error?.statusCode || error?.name || 'send_failed');
+    console.error('Verification email was not accepted by Resend.', deliveryDetail(error));
     throw deliveryError();
   }
 }
