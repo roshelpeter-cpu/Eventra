@@ -1,6 +1,6 @@
 import { NavLink, Outlet } from 'react-router-dom';
 import { BrandMark, MoonIcon, SunIcon } from './Icons.jsx';
-import { useTheme } from '../theme.jsx';
+import { useTheme } from '../theme-context.js';
 
 export function ThemeToggle() {
   const { theme, toggle } = useTheme();

@@ -1,7 +1,7 @@
-import { createContext, useContext, useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
+import { ThemeContext } from './theme-context.js';
 
 const STORAGE_KEY = 'eventra-theme';
-const ThemeContext = createContext(null);
 
 function systemTheme() {
   return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
@@ -46,10 +46,4 @@ export function ThemeProvider({ children }) {
       {children}
     </ThemeContext.Provider>
   );
-}
-
-export function useTheme() {
-  const value = useContext(ThemeContext);
-  if (!value) throw new Error('useTheme must be used within ThemeProvider');
-  return value;
 }

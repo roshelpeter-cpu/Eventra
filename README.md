@@ -523,19 +523,27 @@ If `EMAIL_FROM` is on `resend.dev`, Resend treats it as a testing sender and del
 
 ## Screenshots
 
-Interface screenshots are not in this repository yet. The photograph files in `client/public/photos` are event artwork, not assignment screenshots. Capture the views below and add them in a later commit. Suggested paths:
+These images were captured from the running application. The registration uses the fictional guest Avery Lane at `avery.lane@campus.example`. The other attendee rows are the fictional seed records. The images do not contain API keys, passwords, or one-time codes.
 
-| File to add | What to capture |
-| --- | --- |
-| `docs/screenshots/01-public-events.png` | Public events page showing title, schedule, description or summary, and available capacity |
-| `docs/screenshots/02-event-registration.png` | Event details and the registration form, including name, email, college or organization, and domain interests |
-| `docs/screenshots/03-registration-confirmation.png` | Successful registration or the ticket confirmation page |
-| `docs/screenshots/04-my-tickets.png` | My Tickets page, either the email step or the ticket list after verification |
-| `docs/screenshots/05-admin-attendees.png` | Administrator attendee table with search and status badges |
+### Public Events
 
-Optional, not required to close the screenshot gap: a duplicate-registration error, the simulated payment page, and the same public page in dark mode and at a narrow width.
+![Public events page with titles, schedules, and seats remaining](docs/screenshots/01-public-events.png)
 
-Until those files exist, this section is the pending-screenshots list. Do not treat the paths above as files that are already committed.
+### Event Registration
+
+![Harbor Circuit registration form with name, email, organization, and domain interests](docs/screenshots/02-event-registration.png)
+
+### Registration Confirmation
+
+![Successful Harbor Circuit registration confirmation](docs/screenshots/03-registration-confirmation.png)
+
+### My Tickets
+
+![My Tickets email lookup](docs/screenshots/04-my-tickets.png)
+
+### Admin Attendee Management
+
+![Administrator attendee table with search and status badges](docs/screenshots/05-admin-attendees.png)
 
 ## Testing instructions
 
@@ -576,7 +584,7 @@ Manual checks on a normal development database:
 - Share actions open the browser share sheet or a public share URL. They do not send mail through Eventra.
 - `npm run lint --prefix client` currently reports three `react-refresh/only-export-components` errors in `client/src/components/VenueMap.jsx` and `client/src/theme.jsx`. The production build still completes. Those files export helpers next to components.
 - The local SQLite file can contain registrations created on your machine. It is gitignored and is not part of the public project. A new checkout builds its own demo data with `npm run db:seed`.
-- Assignment screenshots are still to be captured. See the Screenshots section.
+- My Tickets lists an address only after the emailed code is verified. The screenshot shows the lookup form. Completing that step depends on Resend accepting the recipient.
 
 ## Troubleshooting
 

@@ -4,7 +4,7 @@ import { api } from '../api.js';
 import { Field, PageTitle } from '../components/ui.jsx';
 import { useToast } from '../components/useToast.js';
 import { formatWhen } from '../format.js';
-import { useTheme } from '../theme.jsx';
+import { useTheme } from '../theme-context.js';
 
 export function AdminSettingsPage() {
   const toast = useToast();
